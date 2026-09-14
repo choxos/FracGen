@@ -451,6 +451,7 @@ main {
   font-size: 12px;
   font-weight: 650;
 }
+/* Native sliders fill their track with the accent color, so programmatic values stay in sync. */
 input[type="range"] {
   display: block;
   width: 100%;
@@ -458,48 +459,6 @@ input[type="range"] {
   margin: 0;
   accent-color: var(--purple);
   cursor: pointer;
-  --range-fill: 83.333%;
-}
-input[type="range"] {
-  appearance: none;
-  background: transparent;
-}
-input[type="range"]::-webkit-slider-runnable-track {
-  height: 4px;
-  border-radius: 5px;
-  background: linear-gradient(
-    to right,
-    var(--purple) var(--range-fill),
-    #ebe9f3 var(--range-fill)
-  );
-}
-input[type="range"]::-webkit-slider-thumb {
-  appearance: none;
-  width: 15px;
-  height: 15px;
-  margin-top: -5.5px;
-  border: 3px solid #fff;
-  border-radius: 50%;
-  background: var(--purple);
-  box-shadow:
-    0 0 0 1px #d9d3eb,
-    0 2px 4px #594c9820;
-}
-input[type="range"]::-moz-range-track {
-  height: 4px;
-  background: #ebe9f3;
-}
-input[type="range"]::-moz-range-progress {
-  background: var(--purple);
-  height: 4px;
-}
-input[type="range"]::-moz-range-thumb {
-  width: 10px;
-  height: 10px;
-  border: 3px solid #fff;
-  box-shadow: 0 0 0 1px #d9d3eb;
-  border-radius: 50%;
-  background: var(--purple);
 }
 .range-labels {
   display: flex;
@@ -680,14 +639,9 @@ input[type="range"]::-moz-range-thumb {
 .stage-note svg {
   width: 12px;
   height: 12px;
-  color: #6e7887;
-}
-#design-name {
-  color: #6e7887;
 }
 .stage-note-divider {
   margin: 0 1px;
-  color: #6e7887;
 }
 #fractal-canvas {
   display: block;
@@ -770,9 +724,8 @@ input[type="range"]::-moz-range-thumb {
   background-color: #18232d;
   background-image: radial-gradient(#86969f28 0.8px, transparent 0.8px);
 }
-.dark #design-name,
 .dark .stage-note {
-  color: #6e7887;
+  color: #a9b3c0;
 }
 .dark .zoom-controls {
   background: #263441;
@@ -780,7 +733,7 @@ input[type="range"]::-moz-range-thumb {
 }
 .dark .zoom-controls output,
 .dark .icon-button {
-  color: #6e7887;
+  color: #b3bcc8;
 }
 .dark .icon-button:hover {
   background: #3c4757;
@@ -1724,7 +1677,7 @@ select:focus-visible {
   background: #263441;
 }
 .dark .animation-timeline span {
-  color: #6e7887;
+  color: #a9b3c0;
 }
 .fractal-library {
   padding-top: 35px;
@@ -1858,10 +1811,37 @@ select:focus-visible {
 }
 .classic-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 .classic-actions .button {
-  flex: 1;
+  flex: 1 1 150px;
+}
+.library-mode
+  :is(
+    #editor-hint,
+    .editor-tools,
+    .editor-wrap,
+    .editor-actions,
+    #reset-shape,
+    .base-label,
+    .base-options
+  ) {
+  display: none !important;
+}
+.library-note {
+  grid-column: 1/-1;
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+.library-note strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.library-note .button {
+  margin-top: 14px;
 }
 .classic-dialog .classic-hint {
   font-size: 10px;
@@ -2067,10 +2047,6 @@ select:focus-visible {
   width: 36px;
   height: 36px;
   display: block;
-}
-.animation-timeline input {
-  --range-fill: 0%;
-  accent-color: var(--purple);
 }
 @media (max-width: 620px) {
   .brand > img {

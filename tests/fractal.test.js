@@ -5,10 +5,11 @@ import {
   generateFractal,
   generateGrowthFrame,
   getBounds,
+  levelsWithinBudget,
   toPath,
 } from "../src/fractal.js";
-import { drawSeedZoom } from "../src/seed-zoom.js";
-import { getAnimationOptions } from "../src/export.js";
+import { drawSeedZoom, getSeedZoomPace } from "../src/seed-zoom.js";
+import { frameMoment, getAnimationOptions } from "../src/export.js";
 
 test("recursive motifs preserve geometry, fit bounds, and stop at complete safe levels", () => {
   const snowflake = PRESETS.find((preset) => preset.id === "snowflake");
@@ -126,11 +127,20 @@ test("recursive motifs preserve geometry, fit bounds, and stop at complete safe 
     colors: ["#00aaaa", "#6666ee"],
     background: "#fff",
   };
-  const zoomStart = drawSeedZoom(context, { ...zoomOptions, progress: 0 });
-  const zoomFinish = drawSeedZoom(context, { ...zoomOptions, progress: 1 });
+  const zoomStart = drawSeedZoom(context, { ...zoomOptions, time: 0 });
+  const zoomFinish = drawSeedZoom(context, { ...zoomOptions, time: 6 });
   assert.equal(zoomFinish.zoom, 4096);
   assert.ok(zoomFinish.depth > zoomStart.depth);
   assert.ok(zoomFinish.segments > 0 && zoomFinish.segments <= 100_000);
+  // Zoom speed is fixed, so a longer animation goes deeper until the detail limit.
+  const deepZoom = drawSeedZoom(context, { ...zoomOptions, time: 30 });
+  assert.equal(deepZoom.zoom, getSeedZoomPace(snowflake.seed).limit);
+  assert.ok(deepZoom.depth > zoomFinish.depth);
+  assert.ok(deepZoom.segments > 0 && deepZoom.segments <= 100_000);
+  assert.throws(
+    () => drawSeedZoom(context, { ...zoomOptions, time: -1 }),
+    RangeError,
+  );
   const straightZoom = drawSeedZoom(context, {
     ...zoomOptions,
     seed: [
@@ -138,10 +148,25 @@ test("recursive motifs preserve geometry, fit bounds, and stop at complete safe 
       { x: 1, y: 0 },
     ],
     sides: 1,
-    progress: 1,
+    time: 6,
   });
   assert.equal(straightZoom.adaptive, false);
   assert.equal(straightZoom.segments, 1);
+  assert.deepEqual(frameMoment(0, { frames: 180, mode: "smooth" }), {
+    progress: 0,
+    time: 0,
+  });
+  assert.deepEqual(frameMoment(179, { frames: 180, mode: "smooth" }), {
+    progress: 1,
+    time: 6,
+  });
+  assert.deepEqual(frameMoment(100, { frames: 180, mode: "steps" }, 5), {
+    progress: 0.4,
+    time: 3,
+  });
+  assert.equal(levelsWithinBudget(4, 3), 7);
+  assert.equal(levelsWithinBudget(2, 1), 16);
+  assert.equal(generateFractal(snowflake.seed, 16, 3).iterations, 7);
   assert.deepEqual(getAnimationOptions(), {
     mode: "smooth",
     frames: 180,
@@ -178,7 +203,7 @@ test("recursive motifs preserve geometry, fit bounds, and stop at complete safe 
   ]) {
     assert.throws(() => generateFractal(seed, 2), TypeError);
   }
-  for (const level of [-1, 1.5, 7, NaN, "3"])
+  for (const level of [-1, 1.5, 17, NaN, "3"])
     assert.throws(() => generateFractal(snowflake.seed, level), RangeError);
   assert.throws(() => generateFractal(snowflake.seed, 2, 5), RangeError);
 });

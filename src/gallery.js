@@ -1,19 +1,22 @@
 import { CLASSICS, drawClassic, getZoomCamera } from "./classics.js";
-import { drawClassicAsync } from "./classic-renderer.js";
+import { classicExporter, createPainter } from "./classic-renderer.js";
+import { FPS, frameMoment } from "./export.js";
 
-export function initGallery({ getSettings, onExport, onOpen }) {
+export function initGallery({ getSettings, onExport, onImport, onOpen }) {
   const $ = (selector) => document.querySelector(selector);
   let expanded = false;
   let selected;
   let depth;
-  let timer;
+  let settings;
+  let frame = null;
   let playing = false;
-  let pausedFrame = 0;
-  let lastProgress = null;
-  let animationSettings;
-  let renderController;
+  let timer;
   const canvas = $("#classic-canvas");
-  const context = canvas.getContext("2d");
+  const paint = createPainter(canvas.getContext("2d"), (error) => {
+    if (error.name === "AbortError") return;
+    pause();
+    $("#classic-description").textContent = error.message;
+  });
   const observer = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
@@ -46,60 +49,50 @@ export function initGallery({ getSettings, onExport, onOpen }) {
     { rootMargin: "100px" },
   );
 
+  // Cards are built once; filtering only hides them, so thumbnails draw once.
+  const cards = CLASSICS.map((classic) => {
+    const button = document.createElement("button");
+    button.className = "library-card";
+    button.setAttribute("aria-label", `Explore ${classic.name}`);
+    const thumbnail = document.createElement("canvas");
+    thumbnail.width = 210;
+    thumbnail.height = 145;
+    thumbnail.dataset.classic = classic.id;
+    thumbnail.setAttribute("aria-hidden", "true");
+    const name = document.createElement("strong");
+    name.textContent = classic.name;
+    const category = document.createElement("span");
+    category.textContent = classic.family;
+    button.append(thumbnail, name, category);
+    button.addEventListener("click", () => openClassic(classic));
+    $("#library-grid").append(button);
+    observer.observe(thumbnail);
+    return { classic, button };
+  });
+
   function renderLibrary() {
-    observer.disconnect();
     const query = $("#library-search").value.trim().toLocaleLowerCase();
     const family = $("#library-family").value;
-    const matches = CLASSICS.filter(
-      (item) =>
-        (family === "all" || item.family === family) &&
-        `${item.name} ${item.family} ${item.description}`
+    const filtered = Boolean(query) || family !== "all";
+    let matches = 0;
+    for (const { classic, button } of cards) {
+      const match =
+        (family === "all" || classic.family === family) &&
+        `${classic.name} ${classic.family} ${classic.description}`
           .toLocaleLowerCase()
-          .includes(query),
-    );
-    const visible =
-      expanded || query || family !== "all" ? matches : matches.slice(0, 8);
-    $("#library-grid").replaceChildren();
-    for (const classic of visible) {
-      const button = document.createElement("button");
-      button.className = "library-card";
-      button.setAttribute("aria-label", `Explore ${classic.name}`);
-      const thumbnail = document.createElement("canvas");
-      thumbnail.width = 210;
-      thumbnail.height = 145;
-      thumbnail.dataset.classic = classic.id;
-      thumbnail.setAttribute("aria-hidden", "true");
-      const name = document.createElement("strong");
-      name.textContent = classic.name;
-      const category = document.createElement("span");
-      category.textContent = classic.family;
-      button.append(thumbnail, name, category);
-      button.addEventListener("click", () => openClassic(classic));
-      $("#library-grid").append(button);
-      observer.observe(thumbnail);
+          .includes(query);
+      button.hidden = !match || (!filtered && !expanded && matches >= 8);
+      if (match) matches += 1;
     }
-    $("#library-count").textContent = `${matches.length} named fractals`;
-    $("#library-empty").hidden = matches.length > 0;
-    $("#show-all-classics").hidden =
-      matches.length <= 8 || Boolean(query) || family !== "all";
+    $("#library-count").textContent = `${matches} named fractals`;
+    $("#library-empty").hidden = matches > 0;
+    $("#show-all-classics").hidden = matches <= 8 || filtered;
     $("#show-all-classics").textContent = expanded
       ? "Show fewer fractals"
       : `Explore all ${CLASSICS.length} fractals`;
   }
-  function stop() {
-    cancelAnimationFrame(timer);
-    renderController?.abort();
-    renderController = null;
-    timer = null;
-    playing = false;
-    $("#classic-animate span:last-child").textContent =
-      lastProgress === null
-        ? "Watch it zoom"
-        : lastProgress >= 1
-          ? "Replay zoom"
-          : "Resume zoom";
-  }
-  async function draw(progress = null, settings = getSettings()) {
+
+  function options() {
     const base = {
       id: selected.id,
       depth,
@@ -108,50 +101,71 @@ export function initGallery({ getSettings, onExport, onOpen }) {
       colors: settings.colors,
       background: settings.background,
     };
-    if (progress !== null) {
-      const position =
-        settings.animationMode === "steps"
-          ? Math.floor(progress * 12) / 12
-          : progress;
-      if (settings.type === "zoom")
-        base.camera = getZoomCamera(selected.id, position);
-      else base.progress = position;
-    }
-    if (progress !== null) base.quality = progress === 1 ? 650 : 160;
-    renderController = new AbortController();
-    const signal = renderController.signal;
-    await drawClassicAsync(context, base, signal);
-    if (signal.aborted) return;
-    lastProgress = progress;
+    if (frame === null) return base;
+    const { progress, time } = frameMoment(frame, {
+      frames: settings.animationFrames,
+      mode: settings.animationMode,
+    });
+    if (settings.type === "zoom")
+      base.camera = getZoomCamera(selected.id, time);
+    else base.progress = progress;
+    base.quality = playing ? 160 : 650;
+    return base;
+  }
+  function render() {
+    paint(options);
     canvas.setAttribute(
       "aria-label",
-      `${selected.name}${progress === null ? "" : `, animation ${Math.round(progress * 100)} percent complete`}`,
+      frame === null
+        ? selected.name
+        : `${selected.name}, animation ${Math.round(((frame + 1) / settings.animationFrames) * 100)} percent complete`,
     );
+  }
+  function updateLabel() {
+    const zoom = settings.type === "zoom";
+    $("#classic-animate span:last-child").textContent = playing
+      ? "Pause"
+      : frame === null
+        ? `Watch it ${zoom ? "zoom" : "grow"}`
+        : `${frame >= settings.animationFrames - 1 ? "Replay" : "Resume"} ${zoom ? "zoom" : "growth"}`;
+  }
+  function halt() {
+    cancelAnimationFrame(timer);
+    playing = false;
+  }
+  function pause() {
+    const wasPlaying = playing;
+    halt();
+    // Redraw the paused frame at full quality.
+    if (wasPlaying) render();
+    updateLabel();
   }
   function openClassic(classic) {
     onOpen();
-    stop();
+    halt();
     selected = classic;
     depth = classic.defaultDepth;
-    pausedFrame = 0;
-    lastProgress = null;
+    frame = null;
+    settings = getSettings();
     $("#classic-title").textContent = classic.name;
     $("#classic-family").textContent = classic.family;
     $("#classic-description").textContent = classic.description;
     $("#classic-source").href = classic.source;
+    $("#classic-hint").textContent = classic.studio
+      ? "Watch and Export use your studio settings. Open in studio to reshape its line."
+      : "Watch and Export use your studio settings. Open in studio to control its detail, color, zoom, and animation.";
     for (const input of [$("#classic-depth"), $("#classic-depth-number")]) {
       input.min = classic.family === "Escape-time" ? 20 : 1;
       input.max = classic.maxDepth;
       input.step = 1;
       input.value = depth;
     }
-    $("#classic-animate span:last-child").textContent =
-      getSettings().type === "zoom" ? "Watch it zoom" : "Watch it grow";
+    updateLabel();
     $("#classic-dialog").showModal();
-    draw().catch(showRenderError);
+    render();
   }
   function changeDepth(value) {
-    stop();
+    halt();
     const input = $("#classic-depth");
     depth = Math.max(
       Number(input.min),
@@ -162,8 +176,10 @@ export function initGallery({ getSettings, onExport, onOpen }) {
     );
     $("#classic-depth").value = depth;
     $("#classic-depth-number").value = depth;
-    pausedFrame = 0;
-    draw().catch(showRenderError);
+    frame = null;
+    settings = getSettings();
+    updateLabel();
+    render();
   }
   $("#classic-depth").addEventListener("input", (event) =>
     changeDepth(event.target.value),
@@ -173,92 +189,33 @@ export function initGallery({ getSettings, onExport, onOpen }) {
   );
   $("#classic-animate").addEventListener("click", () => {
     if (playing) {
-      stop();
+      pause();
       return;
     }
-    if (lastProgress === null || lastProgress >= 1) pausedFrame = 0;
-    animationSettings = getSettings();
+    settings = getSettings();
+    const frames = settings.animationFrames;
+    if (frame === null || frame >= frames - 1) frame = 0;
     playing = true;
-    $("#classic-animate span:last-child").textContent = "Pause";
-    const started = performance.now() - (pausedFrame * 1000) / 30;
-    let lastFrame = -1;
-    const tick = async (now) => {
-      const frame = Math.min(
-        animationSettings.animationFrames - 1,
-        Math.floor((now - started) / (1000 / 30)),
-      );
-      if (frame !== lastFrame) {
-        try {
-          await draw(
-            animationSettings.animationFrames === 1
-              ? 1
-              : frame / (animationSettings.animationFrames - 1),
-            animationSettings,
-          );
-        } catch (error) {
-          showRenderError(error);
-          return;
-        }
-        if (!playing) return;
-        lastFrame = frame;
-        pausedFrame = frame;
-      }
-      if (frame >= animationSettings.animationFrames - 1) stop();
+    updateLabel();
+    const started = performance.now() - (frame * 1000) / FPS;
+    const tick = (now) => {
+      frame = Math.min(frames - 1, Math.floor(((now - started) * FPS) / 1000));
+      render();
+      if (frame >= frames - 1) pause();
       else timer = requestAnimationFrame(tick);
     };
     timer = requestAnimationFrame(tick);
   });
   $("#classic-download").addEventListener("click", () => {
-    stop();
-    const classic = selected;
-    const settings = getSettings();
-    const exportDepth = depth;
-    onExport({
-      id: classic.id,
-      renderFrame: (ctx, { width, height, progress }, signal) => {
-        const position =
-          settings.animationMode === "steps"
-            ? Math.floor(progress * 12) / 12
-            : progress;
-        const animation =
-          settings.type === "zoom"
-            ? { camera: getZoomCamera(classic.id, position) }
-            : { progress: position };
-        return drawClassicAsync(
-          ctx,
-          {
-            id: classic.id,
-            depth: exportDepth,
-            width,
-            height,
-            colors: settings.colors,
-            background: settings.background,
-            ...animation,
-          },
-          signal,
-        );
-      },
-      renderStill: (ctx, { width, height }, signal) =>
-        drawClassicAsync(
-          ctx,
-          {
-            id: classic.id,
-            depth: exportDepth,
-            width,
-            height,
-            colors: settings.colors,
-            background: settings.background,
-          },
-          signal,
-        ),
-    });
+    pause();
+    onExport(classicExporter(selected.id, depth, getSettings()));
   });
-  function showRenderError(error) {
-    if (error.name === "AbortError") return;
-    stop();
-    $("#classic-description").textContent = error.message;
-  }
-  $("#classic-dialog").addEventListener("close", stop);
+  $("#classic-import").addEventListener("click", () => {
+    halt();
+    $("#classic-dialog").close();
+    onImport(selected, depth);
+  });
+  $("#classic-dialog").addEventListener("close", halt);
   $("#library-search").addEventListener("input", renderLibrary);
   $("#library-family").addEventListener("change", renderLibrary);
   $("#show-all-classics").addEventListener("click", () => {

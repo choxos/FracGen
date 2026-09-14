@@ -22,6 +22,24 @@ export function getAnimationOptions({
   };
 }
 
+export const FPS = 30;
+
+/**
+ * Where frame `frame` sits in an animation: `progress` runs from 0 to 1 over
+ * the frames (pattern growth), and `time` runs from 0 to the length in
+ * seconds, so zooms keep one speed whatever the length. Step-by-step playback
+ * moves in `steps` equal growth steps and half-second zoom jumps.
+ */
+export function frameMoment(frame, { frames, mode }, steps = 12) {
+  let progress = frames === 1 ? 1 : frame / (frames - 1);
+  let time = (progress * frames) / FPS;
+  if (mode === "steps") {
+    if (steps) progress = Math.floor(progress * steps) / steps;
+    time = Math.floor(time * 2) / 2;
+  }
+  return { progress, time };
+}
+
 export function getMp4MimeType() {
   if (
     typeof MediaRecorder === "undefined" ||
@@ -63,8 +81,8 @@ function makeCanvas(size, bounds, colors, background, renderFrame) {
     return {
       canvas,
       context,
-      draw: (progress) =>
-        renderFrame(context, { width: size, height: size, progress }),
+      draw: (moment) =>
+        renderFrame(context, { width: size, height: size, ...moment }),
     };
   const scale = (size * 0.8) / Math.max(bounds.width, bounds.height, 0.001);
   const offsetX = size / 2 - ((bounds.minX + bounds.maxX) / 2) * scale;
@@ -97,7 +115,7 @@ function makeCanvas(size, bounds, colors, background, renderFrame) {
   return { canvas, context, draw };
 }
 
-async function encodeMp4(canvas, draw, animation, onProgress, signal) {
+async function encodeMp4(canvas, drawFrame, animation, onProgress, signal) {
   if (typeof VideoEncoder === "undefined") return null;
   const {
     Output,
@@ -137,10 +155,9 @@ async function encodeMp4(canvas, draw, animation, onProgress, signal) {
     for (let frame = 0; frame < totalFrames; frame += 1) {
       await new Promise((resolve) => setTimeout(resolve, 0));
       checkAbort(signal);
-      if (frame < animation.frames)
-        await draw(animation.frames === 1 ? 1 : frame / (animation.frames - 1));
+      if (frame < animation.frames) await drawFrame(frame);
       checkAbort(signal);
-      await source.add(frame / 30, 1 / 30);
+      await source.add(frame / FPS, 1 / FPS);
       onProgress(0.1 + (0.87 * (frame + 1)) / totalFrames);
     }
     source.close();
@@ -160,13 +177,13 @@ async function encodeMp4(canvas, draw, animation, onProgress, signal) {
 
 async function recordMp4(
   canvas,
-  draw,
+  drawFrame,
   animation,
   mimeType,
   onProgress,
   signal,
 ) {
-  await draw(animation.frames === 1 ? 1 : 0);
+  await drawFrame(0);
   checkAbort(signal);
   return new Promise((resolve, reject) => {
     let recorder;
@@ -243,8 +260,7 @@ async function recordMp4(
       const tick = async () => {
         try {
           checkAbort(signal);
-          if (frame < animation.frames)
-            await draw(frame / (animation.frames - 1));
+          if (frame < animation.frames) await drawFrame(frame);
           else {
             const context = canvas.getContext("2d");
             context.save();
@@ -352,15 +368,23 @@ export async function createExport(
     background,
     renderFrame,
   );
-  const drawProgress = (progress) => {
-    if (renderFrame) return draw(progress);
+  const momentAt = (frame) => {
+    if (renderFrame) return frameMoment(frame, animation);
+    // Line growth ignores time; one level per step, and nothing grows without levels.
+    const { progress } = frameMoment(frame, animation, final.iterations);
+    return { progress: final.iterations ? progress : 1, time: 0 };
+  };
+  const drawMoment = (moment) => {
+    if (renderFrame) return draw(moment);
+    const { progress } = moment;
     if (progress === 1 || final.iterations === 0) return draw(final.points);
     if (animation.mode === "steps")
-      return draw(levels[Math.floor(progress * final.iterations)].points);
+      return draw(levels[Math.round(progress * final.iterations)].points);
     return draw(generateGrowthFrame(seed, progress, iterations, sides).points);
   };
+  const drawFrame = (frame) => drawMoment(momentAt(frame));
   if (format === "png") {
-    await drawProgress(1);
+    await drawMoment({ progress: 1, time: 0 });
     checkAbort(signal);
     const blob = await new Promise((resolve) =>
       canvas.toBlob(resolve, "image/png"),
@@ -381,24 +405,22 @@ export async function createExport(
     const gif = GIFEncoder();
     const timeline = [];
     for (let frame = 0; frame < animation.frames; frame += 1) {
-      let progress =
-        animation.frames === 1 ? 1 : frame / (animation.frames - 1);
-      if (!renderFrame && animation.mode === "steps" && final.iterations)
-        progress = Math.floor(progress * final.iterations) / final.iterations;
-      if (!renderFrame && !final.iterations) progress = 1;
+      const moment = momentAt(frame);
       const delay =
-        (Math.round(((frame + 1) * 100) / 30) -
-          Math.round((frame * 100) / 30)) *
+        (Math.round(((frame + 1) * 100) / FPS) -
+          Math.round((frame * 100) / FPS)) *
         10;
-      if (timeline.at(-1)?.progress === progress)
+      const last = timeline.at(-1)?.moment;
+      // Repeated step-by-step frames become one longer GIF frame.
+      if (last?.progress === moment.progress && last.time === moment.time)
         timeline.at(-1).delay += delay;
-      else timeline.push({ progress, delay });
+      else timeline.push({ moment, delay });
     }
     timeline.at(-1).delay += animation.holdMs;
     for (let frame = 0; frame < timeline.length; frame += 1) {
       await new Promise((resolve) => setTimeout(resolve, 0));
       checkAbort(signal);
-      await drawProgress(timeline[frame].progress);
+      await drawMoment(timeline[frame].moment);
       checkAbort(signal);
       const { data } = context.getImageData(0, 0, size, size);
       const palette = quantize(data, 256);
@@ -418,7 +440,7 @@ export async function createExport(
   }
   const encoded = await encodeMp4(
     canvas,
-    drawProgress,
+    drawFrame,
     animation,
     onProgress,
     signal,
@@ -430,7 +452,7 @@ export async function createExport(
     );
   return recordMp4(
     canvas,
-    drawProgress,
+    drawFrame,
     animation,
     mimeType,
     onProgress,

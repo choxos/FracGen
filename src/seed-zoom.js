@@ -1,53 +1,78 @@
 import { generateFractal, getBounds } from "./fractal.js";
 
+const SEED_ZOOM_RATE = 4;
+const MAX_ZOOM_DEPTH = 200;
 let cachedKey;
 let cachedShape;
 
+function longestPart(seed) {
+  let longest = 0;
+  for (let index = 1; index < seed.length; index += 1)
+    longest = Math.max(
+      longest,
+      Math.hypot(
+        seed[index].x - seed[index - 1].x,
+        seed[index].y - seed[index - 1].y,
+      ),
+    );
+  return longest;
+}
+
+/**
+ * Zoom speed as a factor per second, and the deepest zoom that still adds
+ * detail. Contracting lines are redrawn until their deepest level spans about
+ * 2 pixels or floating-point precision runs out; lines with a nearly
+ * full-length part cannot add detail, so they stop early.
+ */
+export function getSeedZoomPace(seed) {
+  const part = longestPart(seed);
+  return {
+    rate: SEED_ZOOM_RATE,
+    limit:
+      part < 0.95
+        ? Math.min(1e12, Math.max(4096, 2 / (800 * part ** MAX_ZOOM_DEPTH)))
+        : 4096,
+  };
+}
+
 export function drawSeedZoom(
   context,
-  { seed, sides = 3, iterations, width, height, colors, background, progress },
+  { seed, sides = 3, iterations, width, height, colors, background, time },
 ) {
   if (
-    !Number.isFinite(progress) ||
-    progress < 0 ||
-    progress > 1 ||
+    !Number.isFinite(time) ||
+    time < 0 ||
     !Number.isFinite(width) ||
     !Number.isFinite(height) ||
     width <= 0 ||
     height <= 0
   ) {
     throw new RangeError(
-      "Use a positive canvas size and zoom progress from 0 to 1.",
+      "Use a positive canvas size and a zoom time of zero seconds or more.",
     );
   }
   const key = JSON.stringify([seed, sides, iterations]);
   if (key !== cachedKey) {
     const final = generateFractal(seed, iterations, sides);
     const base = generateFractal(seed, 0, sides).points;
-    let contraction = 0;
     let radius = 0;
-    seed.forEach((point, index) => {
+    seed.forEach((point) => {
       radius = Math.max(radius, Math.hypot(point.x, point.y));
-      if (index)
-        contraction = Math.max(
-          contraction,
-          Math.hypot(point.x - seed[index - 1].x, point.y - seed[index - 1].y),
-        );
     });
-    const bounds = getBounds(final.points);
     cachedShape = {
       base,
-      bounds,
-      contraction,
+      bounds: getBounds(final.points),
+      contraction: longestPart(seed),
       radius,
       iterations: final.iterations,
+      ...getSeedZoomPace(seed),
     };
     cachedKey = key;
   }
-  const { base, bounds, contraction, radius } = cachedShape;
+  const { base, bounds, contraction, radius, rate, limit } = cachedShape;
   const adaptive = contraction < 0.95;
-  const maxDepth = adaptive ? 20 : cachedShape.iterations;
-  const zoom = 4096 ** progress;
+  const maxDepth = adaptive ? MAX_ZOOM_DEPTH : cachedShape.iterations;
+  const zoom = Math.min(limit, rate ** time);
   const scale =
     ((Math.min(width, height) * 0.8) /
       Math.max(bounds.width, bounds.height, 0.001)) *
@@ -73,7 +98,8 @@ export function drawSeedZoom(
   context.lineWidth = Math.max(1, Math.min(width, height) * 0.0015);
   context.lineJoin = "round";
   context.lineCap = "round";
-  context.beginPath();
+  // Smallest drawn segment in pixels; grows when the view needs too many segments.
+  let threshold = 0.5;
 
   function visit(start, end, depth) {
     if (segments >= 100_000) return;
@@ -90,7 +116,7 @@ export function drawSeedZoom(
       )
         return;
     }
-    if (depth >= maxDepth || length * scale < 0.5) {
+    if (depth >= maxDepth || length * scale < threshold) {
       context.moveTo(
         width / 2 + (start.x - centerX) * scale,
         height / 2 + (start.y - centerY) * scale,
@@ -115,8 +141,17 @@ export function drawSeedZoom(
     }
   }
 
-  for (let index = 1; index < base.length; index += 1)
-    visit(base[index - 1], base[index], 0);
+  // Dense lines (like the Lévy C curve) would run out of budget partway along
+  // and lose their far end, so coarsen the whole view evenly instead.
+  for (;;) {
+    segments = 0;
+    deepest = 0;
+    context.beginPath();
+    for (let index = 1; index < base.length; index += 1)
+      visit(base[index - 1], base[index], 0);
+    if (segments < 100_000 || threshold >= 64) break;
+    threshold *= 2;
+  }
   context.stroke();
   return {
     zoom,

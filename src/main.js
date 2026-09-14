@@ -1,13 +1,23 @@
 import {
+  MAX_ITERATIONS,
   PRESETS,
   generateFractal,
   generateGrowthFrame,
   getBounds,
+  levelsWithinBudget,
   toPath,
 } from "./fractal.js";
-import { createExport, getMp4MimeType } from "./export.js";
-import { drawSeedZoom } from "./seed-zoom.js";
+import {
+  FPS,
+  createExport,
+  frameMoment,
+  getMp4MimeType,
+  isMp4Supported,
+} from "./export.js";
+import { drawSeedZoom, getSeedZoomPace } from "./seed-zoom.js";
 import { initGallery } from "./gallery.js";
+import { getZoomCamera, getZoomPace } from "./classics.js";
+import { classicExporter, createPainter } from "./classic-renderer.js";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -53,15 +63,24 @@ const palettes = {
   ocean: { name: "Ocean", colors: ["#2571bd", "#38a6b8"] },
   ink: { name: "Ink", colors: ["#323c4b", "#7d899a"] },
 };
+const presetOrigin = (preset) => ({
+  id: preset.id,
+  title: `The ${preset.name.toLowerCase()}`,
+  seed: preset.seed,
+  sides: preset.sides,
+});
 const state = {
   seed: structuredClone(PRESETS[0].seed),
   iterations: 5,
   sides: 3,
   palette: "lagoon",
-  preset: "snowflake",
+  // Where the current line came from: a starter or a line-based library fractal.
+  origin: presetOrigin(PRESETS[0]),
   custom: false,
   zoom: 1,
   dark: false,
+  // A library fractal without a line ({ item, depth }), shown instead of the line.
+  classic: null,
 };
 let mode = "edit";
 let history = [];
@@ -73,12 +92,41 @@ let activeExportClassic = null;
 const motion = { animationMode: "smooth", animationFrames: 180, type: "zoom" };
 let animationLevel = null;
 let animationBounds = null;
+let classicMoment = null;
 let dragIndex = null;
+let dragUndoPending = false;
 let drawPoints = null;
 let renderFrame;
 let toastTimer;
 let exportController;
 let exportUrl;
+let mp4Supported;
+
+const background = () => (state.dark ? "#18232d" : "#fcfdfd");
+const compactNumber = new Intl.NumberFormat("en", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+const formatZoom = (zoom) =>
+  zoom < 10_000
+    ? Math.round(zoom).toLocaleString("en")
+    : compactNumber.format(zoom);
+const lineLevels = () =>
+  Math.min(
+    state.iterations,
+    levelsWithinBudget(state.seed.length - 1, state.sides),
+  );
+const settings = () => ({
+  ...motion,
+  colors: [...palettes[state.palette].colors],
+  background: background(),
+});
+const stagePaint = createPainter(
+  $("#animation-canvas").getContext("2d"),
+  (error) => {
+    if (error.name !== "AbortError") notify(error.message);
+  },
+);
 
 const notify = (message) => {
   $("#toast").textContent = message;
@@ -116,8 +164,67 @@ function renderEditor(focusIndex) {
       preventScroll: true,
     });
 }
+function showCanvas(visible) {
+  $("#animation-canvas").hidden = !visible;
+  $("#fractal-canvas").toggleAttribute("hidden", visible);
+}
+function setDetailSlider(min, max, value) {
+  Object.assign($("#detail"), { min, max, value });
+  $("#detail-value").value = value.toLocaleString("en");
+}
+function classicOptions() {
+  if (!state.classic) return null;
+  const options = {
+    id: state.classic.item.id,
+    depth: state.classic.depth,
+    width: 900,
+    height: 660,
+    colors: palettes[state.palette].colors,
+    background: background(),
+    quality: animationTimer ? 360 : 900,
+  };
+  if (classicMoment) return { ...options, ...classicMoment };
+  if (state.zoom !== 1) options.camera = { zoom: state.zoom };
+  return options;
+}
+function renderClassic() {
+  const { item, depth } = state.classic;
+  showCanvas(true);
+  stagePaint(classicOptions);
+  $("#animation-canvas").setAttribute(
+    "aria-label",
+    `${item.name}, ${item.family.toLowerCase()} fractal`,
+  );
+  $("#detail-label").textContent = "Detail";
+  setDetailSlider(item.family === "Escape-time" ? 20 : 1, item.maxDepth, depth);
+  $("#design-name").textContent = item.name;
+  $("#stage-subtitle").textContent = `${item.family} fractal from the library.`;
+  $("#segment-count").textContent = item.family;
+  $("#iteration-count").textContent = `Detail ${depth.toLocaleString("en")}`;
+  $("#limit-message").hidden = true;
+}
 function renderFractal() {
+  const colors = palettes[state.palette].colors;
+  $("#gradient-start").setAttribute("stop-color", colors[0]);
+  $("#gradient-end").setAttribute("stop-color", colors[1]);
+  $("#zoom-value").value = `${Math.round(state.zoom * 100)}%`;
+  $("#zoom-out").disabled = state.zoom <= 0.5;
+  $("#zoom-in").disabled = state.zoom >= 3;
+  $$(".preset-card").forEach((b) =>
+    b.setAttribute(
+      "aria-pressed",
+      String(
+        !state.classic && !state.custom && state.origin.id === b.dataset.preset,
+      ),
+    ),
+  );
+  updateAnimationNote();
+  if (state.classic) {
+    renderClassic();
+    return;
+  }
   const depth = state.iterations;
+  showCanvas(false);
   result =
     animationLevel === null
       ? generateFractal(state.seed, depth, state.sides)
@@ -135,9 +242,6 @@ function renderFractal() {
     "transform",
     `translate(${x} ${y}) scale(${scale})`,
   );
-  const colors = palettes[state.palette].colors;
-  $("#gradient-start").setAttribute("stop-color", colors[0]);
-  $("#gradient-end").setAttribute("stop-color", colors[1]);
   $("#fractal-path").setAttribute(
     "stroke-width",
     state.sides === 1 ? "1.65" : "1.25",
@@ -146,47 +250,47 @@ function renderFractal() {
     `${result.segments.toLocaleString()} segments`;
   $("#iteration-count").textContent =
     `${result.iterations} repetition${result.iterations === 1 ? "" : "s"}`;
-  $("#detail-value").value = depth;
-  $("#detail").value = depth;
-  $("#detail").style.setProperty("--range-fill", `${(depth / 6) * 100}%`);
-  const name = state.custom
-    ? "Your own creation"
-    : `The ${PRESETS.find((p) => p.id === state.preset).name.toLowerCase()}`;
+  $("#detail-label").textContent = "Repetitions";
+  // The slider stops at the deepest complete level this line can draw.
+  setDetailSlider(
+    0,
+    levelsWithinBudget(state.seed.length - 1, state.sides),
+    lineLevels(),
+  );
+  const name = state.custom ? "Your own creation" : state.origin.title;
   $("#design-name").textContent = name;
+  $("#stage-subtitle").textContent = "One small shape, repeated.";
   $("#fractal-title").textContent = name;
   $("#fractal-description").textContent =
     `Your shape repeated ${result.iterations} times, creating ${result.segments.toLocaleString()} line segments. ${palettes[state.palette].name} colors.`;
-  $("#zoom-value").value = `${Math.round(state.zoom * 100)}%`;
-  $("#zoom-out").disabled = state.zoom <= 0.5;
-  $("#zoom-in").disabled = state.zoom >= 3;
   $("#limit-message").hidden = !result.limited;
   $("#limit-message").textContent =
     `Showing ${result.iterations} repetitions to keep your canvas responsive. Remove some points to explore more repetitions.`;
-  $$(".preset-card").forEach((b) =>
-    b.setAttribute(
-      "aria-pressed",
-      String(!state.custom && state.preset === b.dataset.preset),
-    ),
-  );
 }
 function scheduleRender() {
   cancelAnimationFrame(renderFrame);
   renderFrame = requestAnimationFrame(renderFractal);
+}
+function setAnimateButton(iconName, label, pressed) {
+  $("#animate-label").textContent = label;
+  $("#animate-button [data-icon]").innerHTML = icon(iconName);
+  $("#animate-button").setAttribute("aria-pressed", String(pressed));
 }
 function stopAnimation() {
   cancelAnimationFrame(animationTimer);
   animationTimer = null;
   animationLevel = null;
   animationBounds = null;
+  classicMoment = null;
   animationPaused = false;
   animationFrameIndex = 0;
-  $("#animation-canvas").hidden = true;
-  $("#fractal-canvas").removeAttribute("hidden");
+  showCanvas(Boolean(state.classic));
   $("#animation-timeline").hidden = true;
-  $("#animate-label").textContent =
-    motion.type === "zoom" ? "Watch it zoom" : "Watch it grow";
-  $("#animate-button [data-icon]").innerHTML = icon("play");
-  $("#animate-button").setAttribute("aria-pressed", "false");
+  setAnimateButton(
+    "play",
+    motion.type === "zoom" ? "Watch it zoom" : "Watch it grow",
+    false,
+  );
 }
 function editShape(focusIndex) {
   stopAnimation();
@@ -212,7 +316,7 @@ function editorPoint(event) {
   );
   return {
     x: Math.max(0, Math.min(1, (point.x - 30) / 240)),
-    y: Math.max(-0.46, Math.min(0.23, (point.y - 130) / 240)),
+    y: Math.max(-0.5, Math.min(0.3, (point.y - 130) / 240)),
   };
 }
 function sampledLine(points) {
@@ -239,7 +343,8 @@ $("#shape-editor").addEventListener("pointerdown", (event) => {
     state.seed = sampledLine(drawPoints);
     editShape();
   } else if (target) {
-    remember();
+    // Save an undo step on the first move, so a click alone leaves no empty step.
+    dragUndoPending = true;
     dragIndex = Number(target.dataset.point);
     $(`.seed-point[data-point="${dragIndex}"]`)?.focus({ preventScroll: true });
   } else return;
@@ -256,6 +361,8 @@ $("#shape-editor").addEventListener("pointermove", (event) => {
       editShape();
     }
   } else if (dragIndex !== null) {
+    if (dragUndoPending) remember();
+    dragUndoPending = false;
     state.seed[dragIndex] = editorPoint(event);
     editShape();
   }
@@ -268,6 +375,7 @@ function endPointer() {
   }
   if (dragIndex !== null) renderEditor(dragIndex);
   dragIndex = null;
+  dragUndoPending = false;
 }
 $("#shape-editor").addEventListener("pointerup", endPointer);
 $("#shape-editor").addEventListener("pointercancel", endPointer);
@@ -310,9 +418,9 @@ $("#shape-editor").addEventListener("keydown", (event) => {
     ),
   );
   point.y = Math.max(
-    -0.46,
+    -0.5,
     Math.min(
-      0.23,
+      0.3,
       point.y +
         (event.key === "ArrowDown"
           ? step
@@ -346,18 +454,19 @@ $("#add-point").addEventListener("click", () => {
   setMode("edit");
   editShape(insertAt);
 });
-$("#undo").addEventListener("click", () => {
+function undo() {
   if (!history.length) return;
   stopAnimation();
   Object.assign(state, history.pop());
   $("#undo").disabled = !history.length;
   renderEditor();
   renderFractal();
-});
+}
+$("#undo").addEventListener("click", undo);
 $("#reset-shape").addEventListener("click", () => {
   remember();
   stopAnimation();
-  state.seed = structuredClone(PRESETS.find((p) => p.id === state.preset).seed);
+  state.seed = structuredClone(state.origin.seed);
   state.custom = false;
   setMode("edit");
   renderEditor();
@@ -366,7 +475,9 @@ $("#reset-shape").addEventListener("click", () => {
 });
 $("#detail").addEventListener("input", (event) => {
   stopAnimation();
-  state.iterations = Number(event.target.value);
+  const value = Number(event.target.value);
+  if (state.classic) state.classic.depth = value;
+  else state.iterations = value;
   renderFractal();
 });
 $$("[data-sides]").forEach((button) =>
@@ -419,8 +530,8 @@ $("#fit-view").addEventListener("click", () => {
 });
 $("#background-button").addEventListener("click", () => {
   stopAnimation();
-  renderFractal();
   state.dark = !state.dark;
+  renderFractal();
   $("#fractal-stage").classList.toggle("dark", state.dark);
   $("#background-button").setAttribute("aria-pressed", String(state.dark));
   $("#background-button").setAttribute(
@@ -454,35 +565,46 @@ document.addEventListener("keydown", (event) => {
     $(".preview-panel").classList.contains("expanded")
   )
     toggleExpanded(false);
+  if (
+    (event.metaKey || event.ctrlKey) &&
+    !event.shiftKey &&
+    !event.altKey &&
+    event.key.toLowerCase() === "z" &&
+    !event.target.closest?.("input, select, textarea") &&
+    !document.querySelector("dialog[open]") &&
+    !state.classic &&
+    history.length
+  ) {
+    event.preventDefault();
+    undo();
+  }
 });
 function drawAnimationFrame(index) {
-  const progress =
-    motion.animationFrames === 1 ? 1 : index / (motion.animationFrames - 1);
-  const displayed =
-    motion.animationMode === "steps"
-      ? Math.floor(progress * 12) / 12
-      : progress;
-  if (motion.type === "zoom") {
-    $("#animation-canvas").hidden = false;
-    $("#fractal-canvas").setAttribute("hidden", "");
-    drawSeedZoom($("#animation-canvas").getContext("2d"), {
+  const timing = { frames: motion.animationFrames, mode: motion.animationMode };
+  if (state.classic) {
+    const { progress, time } = frameMoment(index, timing);
+    classicMoment =
+      motion.type === "zoom"
+        ? { camera: getZoomCamera(state.classic.item.id, time) }
+        : { progress };
+    stagePaint(classicOptions);
+    if (classicMoment.camera)
+      $("#zoom-value").value = `${formatZoom(classicMoment.camera.zoom)}×`;
+  } else if (motion.type === "zoom") {
+    showCanvas(true);
+    const { zoom } = drawSeedZoom($("#animation-canvas").getContext("2d"), {
       seed: state.seed,
       sides: state.sides,
       iterations: state.iterations,
       width: 900,
       height: 660,
       colors: palettes[state.palette].colors,
-      background: state.dark ? "#18232d" : "#fcfdfd",
-      progress: displayed,
+      background: background(),
+      time: frameMoment(index, timing).time,
     });
-    $("#zoom-value").value =
-      `${Math.round(4096 ** displayed).toLocaleString()}×`;
+    $("#zoom-value").value = `${formatZoom(zoom)}×`;
   } else {
-    animationLevel =
-      motion.animationMode === "steps"
-        ? Math.floor(progress * state.iterations) /
-          Math.max(1, state.iterations)
-        : progress;
+    animationLevel = frameMoment(index, timing, lineLevels()).progress;
     renderFractal();
   }
   $("#animation-scrub").value = index;
@@ -491,17 +613,15 @@ function drawAnimationFrame(index) {
 }
 function startPlayback() {
   animationPaused = false;
-  $("#animate-label").textContent = "Pause";
-  $("#animate-button [data-icon]").innerHTML = icon("pause");
-  $("#animate-button").setAttribute("aria-pressed", "true");
+  setAnimateButton("pause", "Pause", true);
   $("#animation-timeline").hidden = false;
   $("#animation-scrub").max = Math.max(1, motion.animationFrames - 1);
-  const started = performance.now() - (animationFrameIndex * 1000) / 30;
+  const started = performance.now() - (animationFrameIndex * 1000) / FPS;
   let last = -1;
   const tick = (now) => {
     const frame = Math.min(
       motion.animationFrames - 1,
-      Math.floor((now - started) / (1000 / 30)),
+      Math.floor((now - started) / (1000 / FPS)),
     );
     if (frame !== last) {
       drawAnimationFrame(frame);
@@ -511,9 +631,9 @@ function startPlayback() {
     if (frame >= motion.animationFrames - 1) {
       animationTimer = null;
       animationPaused = false;
-      $("#animate-label").textContent = "Replay";
-      $("#animate-button [data-icon]").innerHTML = icon("reset");
-      $("#animate-button").setAttribute("aria-pressed", "false");
+      setAnimateButton("reset", "Replay", false);
+      // Redraw the last library frame at full quality.
+      if (state.classic) stagePaint(classicOptions);
     } else animationTimer = requestAnimationFrame(tick);
   };
   animationTimer = requestAnimationFrame(tick);
@@ -523,19 +643,20 @@ $("#animate-button").addEventListener("click", () => {
     cancelAnimationFrame(animationTimer);
     animationTimer = null;
     animationPaused = true;
-    $("#animate-label").textContent = "Resume";
-    $("#animate-button [data-icon]").innerHTML = icon("play");
-    $("#animate-button").setAttribute("aria-pressed", "false");
+    setAnimateButton("play", "Resume", false);
+    if (state.classic) stagePaint(classicOptions);
     return;
   }
   if (!animationPaused) animationFrameIndex = 0;
-  const target = generateFractal(state.seed, state.iterations, state.sides);
-  animationBounds = getBounds(
-    Array.from(
-      { length: target.iterations + 1 },
-      (_, i) => generateFractal(state.seed, i, state.sides).points,
-    ).flat(),
-  );
+  if (!state.classic && motion.type === "growth") {
+    // Frame every level of the growth the same way, so the view holds still.
+    animationBounds = getBounds(
+      Array.from(
+        { length: lineLevels() + 1 },
+        (_, i) => generateFractal(state.seed, i, state.sides).points,
+      ).flat(),
+    );
+  }
   startPlayback();
 });
 $("#animation-scrub").addEventListener("input", (event) => {
@@ -544,23 +665,41 @@ $("#animation-scrub").addEventListener("input", (event) => {
   animationPaused = true;
   animationFrameIndex = Number(event.target.value);
   drawAnimationFrame(animationFrameIndex);
-  $("#animate-label").textContent = "Resume";
-  $("#animate-button [data-icon]").innerHTML = icon("play");
-  $("#animate-button").setAttribute("aria-pressed", "false");
+  setAnimateButton("play", "Resume", false);
 });
+function updateAnimationNote() {
+  const seconds = motion.animationFrames / FPS;
+  let note;
+  if (motion.type === "growth") {
+    note = state.classic
+      ? `Builds the pattern over ${seconds} seconds.`
+      : `Builds ${lineLevels()} repetitions over ${seconds} seconds.`;
+  } else {
+    const { rate, limit } = state.classic
+      ? getZoomPace(state.classic.item.id)
+      : getSeedZoomPace(state.seed);
+    const deepest = rate ** seconds;
+    note =
+      deepest >= limit
+        ? `Reaches its ${formatZoom(limit)}× detail limit after ${(Math.log(limit) / Math.log(rate)).toFixed(1)} seconds, then holds.`
+        : `Zooms ${formatZoom(deepest)}× deep. Longer animations go deeper at the same speed.`;
+  }
+  $("#animation-depth").textContent = note;
+}
 function updateMotion() {
   stopAnimation();
   renderFractal();
-  $("#animation-frames").value = motion.animationFrames;
-  $("#animation-frames-number").value = motion.animationFrames;
-  $("#animation-frames").style.setProperty(
-    "--range-fill",
-    `${((motion.animationFrames - 1) / 999) * 100}%`,
-  );
+  const seconds = motion.animationFrames / FPS;
+  $("#animation-seconds").value = seconds;
+  $("#animation-seconds-number").value = seconds;
   $("#animation-duration").textContent =
-    `${(motion.animationFrames / 30).toFixed(1)} seconds at 30 frames per second.`;
+    `${motion.animationFrames.toLocaleString("en")} frames at ${FPS} frames per second.`;
   $("#animation-summary").textContent =
     `${motion.animationMode === "smooth" ? "Smooth" : "Stepped"} ${motion.type === "zoom" ? "zoom" : "growth"}`;
+}
+function setSeconds(value) {
+  motion.animationFrames = Math.max(1, Math.min(30, Math.round(value))) * FPS;
+  updateMotion();
 }
 $("#animation-type").addEventListener("change", (event) => {
   motion.type = event.target.value;
@@ -576,22 +715,17 @@ $$("[data-motion]").forEach((button) =>
     updateMotion();
   }),
 );
-$("#animation-frames").addEventListener("input", (event) => {
-  motion.animationFrames = Number(event.target.value);
-  updateMotion();
-});
-$("#animation-frames-number").addEventListener("change", (event) => {
+$("#animation-seconds").addEventListener("input", (event) =>
+  setSeconds(Number(event.target.value)),
+);
+$("#animation-seconds-number").addEventListener("change", (event) => {
   if (!event.target.validity.valid || event.target.value === "") {
-    event.target.value = motion.animationFrames;
+    event.target.value = motion.animationFrames / FPS;
   }
 });
-$("#animation-frames-number").addEventListener("input", (event) => {
+$("#animation-seconds-number").addEventListener("input", (event) => {
   if (!event.target.validity.valid || event.target.value === "") return;
-  const value = Number(event.target.value);
-  motion.animationFrames = Number.isFinite(value)
-    ? Math.max(1, Math.min(1000, Math.round(value)))
-    : 180;
-  updateMotion();
+  setSeconds(Number(event.target.value));
 });
 
 const presetStyles = [
@@ -618,24 +752,72 @@ $("#preset-grid").innerHTML = PRESETS.map((preset, index) => {
   const style = presetStyles[index];
   return `<button class="preset-card" data-preset="${preset.id}" aria-pressed="${index === 0}" aria-label="Start with ${preset.name}"><span class="preset-preview" style="--preset-bg:${style.bg}"><svg viewBox="0 0 67 64" aria-hidden="true"><path d="${toPath(preview.points)}" transform="translate(${33.5 - ((b.minX + b.maxX) / 2) * scale},${32 - ((b.minY + b.maxY) / 2) * scale}) scale(${scale})" fill="none" stroke="${style.color}" stroke-width=".75" vector-effect="non-scaling-stroke"/></svg></span><span class="preset-copy"><strong>${preset.name}</strong><small>${style.description}</small></span><span class="preset-check">${icon("check")}</span></button>`;
 }).join("");
+function updateLibraryMode() {
+  const item = state.classic?.item;
+  $(".control-panel").classList.toggle("library-mode", Boolean(item));
+  $("#library-note").hidden = !item;
+  if (item) $("#library-note-name").textContent = item.name;
+}
+function loadSeed(origin, iterations) {
+  stopAnimation();
+  state.classic = null;
+  state.origin = origin;
+  state.seed = structuredClone(origin.seed);
+  state.sides = origin.sides;
+  if (iterations !== undefined) state.iterations = iterations;
+  state.custom = false;
+  state.zoom = 1;
+  history = [];
+  $("#undo").disabled = true;
+  setMode("edit");
+  updateBase();
+  updateLibraryMode();
+  renderEditor();
+  renderFractal();
+}
 $$("[data-preset]").forEach((button) =>
   button.addEventListener("click", () => {
-    stopAnimation();
     const preset = PRESETS.find((p) => p.id === button.dataset.preset);
-    state.seed = structuredClone(preset.seed);
-    state.sides = preset.sides;
-    state.preset = preset.id;
-    state.custom = false;
-    state.zoom = 1;
-    history = [];
-    $("#undo").disabled = true;
-    setMode("edit");
-    updateBase();
-    renderEditor();
-    renderFractal();
+    loadSeed(presetOrigin(preset));
     notify(`${preset.name} loaded. Make it your own.`);
   }),
 );
+function importClassic(item, depth) {
+  if (item.studio) {
+    loadSeed(
+      { id: item.id, title: item.name, ...item.studio },
+      Math.min(depth, MAX_ITERATIONS),
+    );
+  } else {
+    stopAnimation();
+    state.classic = { item, depth };
+    state.zoom = 1;
+    updateLibraryMode();
+    renderFractal();
+  }
+  $("#studio").scrollIntoView({
+    behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? "auto"
+      : "smooth",
+  });
+  (item.studio ? $("#shape-editor") : $("#animate-button")).focus({
+    preventScroll: true,
+  });
+  notify(
+    item.studio
+      ? `${item.name} is in the studio. Drag its points to reshape it.`
+      : `${item.name} is in the studio. Change its detail, color, zoom, or animation.`,
+  );
+}
+$("#back-to-shape").addEventListener("click", () => {
+  stopAnimation();
+  state.classic = null;
+  state.zoom = 1;
+  updateLibraryMode();
+  renderEditor();
+  renderFractal();
+  $("#shape-editor").focus({ preventScroll: true });
+});
 
 $("#help-button").addEventListener("click", () =>
   $("#help-dialog").showModal(),
@@ -657,14 +839,47 @@ $$("dialog").forEach((dialog) =>
   }),
 );
 
+function openDownload() {
+  const svg = $("input[value=svg]");
+  svg.closest("label").hidden = Boolean(activeExportClassic);
+  if (activeExportClassic && svg.checked) $("input[value=png]").checked = true;
+  $("#download-dialog").showModal();
+  checkMp4();
+  updateExportFormat();
+}
 $("#download-button").addEventListener("click", () => {
-  activeExportClassic = null;
   stopAnimation();
   renderFractal();
-  $("input[value=svg]").closest("label").hidden = false;
-  $("#download-dialog").showModal();
-  updateExportFormat();
+  activeExportClassic = state.classic
+    ? classicExporter(state.classic.item.id, state.classic.depth, settings())
+    : null;
+  openDownload();
 });
+// MediaRecorder MP4 is known right away; WebCodecs encoding needs an async check.
+function checkMp4() {
+  if (mp4Supported !== undefined) return;
+  if (getMp4MimeType()) {
+    mp4Supported = true;
+    return;
+  }
+  mp4Supported = null;
+  isMp4Supported()
+    .then(
+      (supported) => {
+        mp4Supported = supported;
+      },
+      () => {
+        mp4Supported = false;
+      },
+    )
+    .finally(syncMp4);
+}
+function syncMp4() {
+  const mp4 = $('input[name="format"]:checked').value === "mp4";
+  $("#save-download").disabled =
+    Boolean(exportController) || (mp4 && mp4Supported !== true);
+  $("#mp4-support-note").hidden = !mp4 || mp4Supported !== false;
+}
 function resetExportResult() {
   if (exportUrl) URL.revokeObjectURL(exportUrl);
   exportUrl = null;
@@ -677,14 +892,14 @@ function updateExportFormat() {
   resetExportResult();
   const format = $('input[name="format"]:checked').value;
   const animated = ["gif", "mp4"].includes(format);
+  const seconds = motion.animationFrames / FPS;
   $("#export-animation-note").hidden = !animated;
   $("#save-download").innerHTML =
     `${icon(animated ? "play" : "download")}${animated ? "Create animation" : "Download creation"}`;
-  $("#save-download").disabled = format === "mp4" && !getMp4MimeType();
   if (animated)
     $("#export-animation-note").textContent =
-      `${motion.animationMode === "smooth" ? "Smooth" : "Step-by-step"} ${motion.type === "zoom" ? "zoom journey" : "pattern growth"}, ${motion.animationFrames} frames (${(motion.animationFrames / 30).toFixed(1)} seconds), plus a final pause. Preview before saving.${motion.animationFrames > 400 ? " Longer animations can take a while to create." : ""}`;
-  $("#mp4-support-note").hidden = format !== "mp4" || Boolean(getMp4MimeType());
+      `${motion.animationMode === "smooth" ? "Smooth" : "Step-by-step"} ${motion.type === "zoom" ? "zoom journey" : "pattern growth"}, ${seconds} second${seconds === 1 ? "" : "s"} (${motion.animationFrames} frames), plus a final pause. Preview before saving.${seconds > 15 ? " Longer animations can take a while to create." : ""}`;
+  syncMp4();
 }
 $$('input[name="format"]').forEach((input) =>
   input.addEventListener("change", updateExportFormat),
@@ -693,7 +908,7 @@ function saveBlob(blob, format) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `fracgen-${activeExportClassic?.id || (state.custom ? "my-creation" : state.preset)}.${format}`;
+  a.download = `fracgen-${activeExportClassic?.id || (state.custom ? "my-creation" : state.origin.id)}.${format}`;
   document.body.append(a);
   a.click();
   a.remove();
@@ -712,14 +927,12 @@ $("#save-download").addEventListener("click", async () => {
   $("#export-error").hidden = true;
   try {
     const animated = ["gif", "mp4"].includes(format);
-    const colors = [...palettes[state.palette].colors];
-    const background = state.dark ? "#18232d" : "#fcfdfd";
     const snapshot = {
       seed: structuredClone(state.seed),
       sides: state.sides,
       iterations: state.iterations,
-      colors,
-      background,
+      colors: [...palettes[state.palette].colors],
+      background: background(),
     };
     const classicRenderer =
       activeExportClassic &&
@@ -729,15 +942,7 @@ $("#save-download").addEventListener("click", async () => {
     const drawFrame = classicRenderer
       ? (context, frame) => classicRenderer(context, frame, signal)
       : animated && motion.type === "zoom"
-        ? (context, frame) =>
-            drawSeedZoom(context, {
-              ...snapshot,
-              ...frame,
-              progress:
-                motion.animationMode === "steps"
-                  ? Math.floor(frame.progress * 12) / 12
-                  : frame.progress,
-            })
+        ? (context, frame) => drawSeedZoom(context, { ...snapshot, ...frame })
         : undefined;
     const blob = await createExport(
       {
@@ -757,7 +962,7 @@ $("#save-download").addEventListener("click", async () => {
       },
     );
     if (signal.aborted) return;
-    if (["gif", "mp4"].includes(format)) {
+    if (animated) {
       exportUrl = URL.createObjectURL(blob);
       const preview = document.createElement(
         format === "mp4" ? "video" : "img",
@@ -796,10 +1001,10 @@ $("#save-download").addEventListener("click", async () => {
     }
   } finally {
     if (exportController === controller) {
-      $("#export-progress").hidden = true;
-      $("#save-download").disabled = false;
-      $(".export-options").disabled = false;
       exportController = null;
+      $("#export-progress").hidden = true;
+      $(".export-options").disabled = false;
+      syncMp4();
     }
   }
 });
@@ -807,10 +1012,10 @@ $("#download-dialog").addEventListener("close", () => {
   exportController?.abort();
   exportController = null;
   $("#export-progress").hidden = true;
-  $("#save-download").disabled = false;
   $(".export-options").disabled = false;
   $("#export-result video")?.pause();
   resetExportResult();
+  syncMp4();
 });
 $("#cancel-export").addEventListener("click", () => {
   exportController?.abort();
@@ -821,19 +1026,12 @@ initGallery({
     stopAnimation();
     renderFractal();
   },
-  getSettings: () => ({
-    ...motion,
-    colors: [...palettes[state.palette].colors],
-    background: state.dark ? "#18232d" : "#fcfdfd",
-  }),
+  getSettings: settings,
   onExport: (classic) => {
     activeExportClassic = classic;
-    $("input[value=svg]").closest("label").hidden = true;
-    if ($("input[value=svg]").checked) $("input[value=png]").checked = true;
-    $("#download-dialog").showModal();
-    updateExportFormat();
+    openDownload();
   },
+  onImport: importClassic,
 });
 renderEditor();
-renderFractal();
 updateMotion();

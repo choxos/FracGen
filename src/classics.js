@@ -1,5 +1,42 @@
+import { PRESETS } from "./fractal.js";
+
 const BOTANY = "https://algorithmicbotany.org/papers/abop/abop.pdf";
 const MATHWORLD = "https://mathworld.wolfram.com/";
+const MINKOWSKI_SEED = [
+  [0, 0],
+  [0.25, 0],
+  [0.25, -0.25],
+  [0.5, -0.25],
+  [0.5, 0],
+  [0.5, 0.25],
+  [0.75, 0.25],
+  [0.75, 0],
+  [1, 0],
+].map(([x, y]) => ({ x, y }));
+/** Single-rule edge replacements that the studio's line editor reproduces exactly. */
+const STUDIO_SEEDS = {
+  "koch-snowflake": { seed: PRESETS[0].seed, sides: 3 },
+  "koch-curve": { seed: PRESETS[0].seed, sides: 1 },
+  minkowski: { seed: MINKOWSKI_SEED, sides: 1 },
+  "koch-island": { seed: MINKOWSKI_SEED, sides: 4 },
+  levy: {
+    seed: [
+      { x: 0, y: 0 },
+      { x: 0.5, y: -0.5 },
+      { x: 1, y: 0 },
+    ],
+    sides: 1,
+  },
+  terdragon: {
+    seed: [
+      { x: 0, y: 0 },
+      { x: 0.5, y: -Math.sqrt(3) / 6 },
+      { x: 0.5, y: Math.sqrt(3) / 6 },
+      { x: 1, y: 0 },
+    ],
+    sides: 1,
+  },
+};
 
 export const CLASSICS = [
   [
@@ -298,6 +335,7 @@ export const CLASSICS = [
   maxDepth,
   defaultDepth,
   source,
+  studio: STUDIO_SEEDS[id],
 }));
 
 const CURVES = {
@@ -545,15 +583,68 @@ const ESCAPE_VIEWS = {
   multibrot: [0, 0, 3.2],
   newton: [0, 0, 3.5],
 };
+// Deepest zooms that still resolve detail at each target, measured by rendering each decade.
+const ESCAPE_LIMITS = {
+  mandelbrot: 1e11,
+  julia: 1e12,
+  rabbit: 1e12,
+  "burning-ship": 1e4,
+  tricorn: 1e4,
+  multibrot: 1e12,
+  newton: 1e5,
+};
 
-/** Escape cameras use complex coordinates; other cameras use normalized geometry bounds. */
-export function getZoomCamera(id, progress) {
-  const p = clamp(progress, 0, 1);
+function zoomTarget(id) {
+  const item = CLASSICS.find((entry) => entry.id === id);
+  const scene = geometry(id, item.maxDepth);
+  const path = scene.paths[Math.floor(scene.paths.length * 0.4)];
+  const polygon = scene.polygons[Math.floor(scene.polygons.length * 0.4)];
+  const rect = scene.rects[Math.floor(scene.rects.length * 0.4)];
+  const dot = scene.dots[Math.floor(scene.dots.length / 2)];
+  const index = path ? Math.floor(path.length * 0.4) : 0;
+  const point = path?.[index] || polygon?.[0] || dot || rect;
+  let feature = 0;
+  if (path?.length > 1) {
+    const at = Math.max(1, index);
+    feature = Math.hypot(
+      path[at][0] - path[at - 1][0],
+      path[at][1] - path[at - 1][1],
+    );
+  } else if (polygon)
+    feature = Math.hypot(
+      polygon[1][0] - polygon[0][0],
+      polygon[1][1] - polygon[0][1],
+    );
+  else if (!dot && rect) feature = Math.min(rect[2], rect[3]);
+  return { scene, point, feature };
+}
+
+/**
+ * Zoom speed as a factor per second, and the deepest zoom that still adds
+ * detail: floating-point precision for escape-time sets, and the point where
+ * the finest stored piece would span about 24 preview pixels for geometry.
+ */
+export function getZoomPace(id) {
   if (!CLASSICS.some((item) => item.id === id))
     throw new RangeError(`Unknown fractal: ${id}`);
+  if (ESCAPE_VIEWS[id]) return { rate: 4, limit: ESCAPE_LIMITS[id] };
+  const { scene, feature } = zoomTarget(id);
+  const { minX, minY, maxX, maxY } = scene.bounds;
+  const extent = Math.max(maxX - minX, maxY - minY);
+  return {
+    rate: 16 ** (1 / 6),
+    limit: feature ? clamp(extent / (22 * feature), 16, 256) : 16,
+  };
+}
+
+/** Escape cameras use complex coordinates; other cameras use normalized geometry bounds. */
+export function getZoomCamera(id, seconds) {
+  const { rate, limit } = getZoomPace(id);
+  const time = clamp(seconds, 0, 3600);
+  const zoom = Math.min(limit, rate ** time);
   if (ESCAPE_VIEWS[id]) {
     const [baseX, baseY] = ESCAPE_VIEWS[id];
-    if (p === 0) return { zoom: 1, centerX: baseX, centerY: baseY };
+    if (time === 0) return { zoom: 1, centerX: baseX, centerY: baseY };
     let target =
       id === "mandelbrot"
         ? [-0.743643887037151, 0.13182590420533]
@@ -577,25 +668,16 @@ export function getZoomCamera(id, progress) {
         (Math.sign(b) * Math.sqrt((radius - a) / 2)) / 2,
       ];
     }
-    const zoom = 10 ** (p * (id === "mandelbrot" ? 8 : 3));
     return {
       zoom,
       centerX: target[0] + (baseX - target[0]) / zoom,
       centerY: target[1] + (baseY - target[1]) / zoom,
     };
   }
-  const item = CLASSICS.find((entry) => entry.id === id);
-  const scene = geometry(id, item.maxDepth);
-  const path = scene.paths[Math.floor(scene.paths.length * 0.4)];
-  const point =
-    path?.[Math.floor(path.length * 0.4)] ||
-    scene.polygons[Math.floor(scene.polygons.length * 0.4)]?.[0] ||
-    scene.dots[Math.floor(scene.dots.length / 2)] ||
-    scene.rects[Math.floor(scene.rects.length * 0.4)];
+  const { scene, point } = zoomTarget(id);
   const { minX, minY, maxX, maxY } = scene.bounds;
   const x = (point[0] - minX) / Math.max(maxX - minX, 1e-9),
     y = (point[1] - minY) / Math.max(maxY - minY, 1e-9);
-  const zoom = 16 ** p;
   return { zoom, centerX: x + (0.5 - x) / zoom, centerY: y + (0.5 - y) / zoom };
 }
 
@@ -620,17 +702,17 @@ function escapeRaster(
   quality,
 ) {
   const [defaultX, defaultY, span] = ESCAPE_VIEWS[id];
-  const zoom = clamp(camera?.zoom ?? 1, 1, 1e8);
+  const zoom = clamp(camera?.zoom ?? 1, 0.25, 1e12);
   const centerX = Number.isFinite(camera?.centerX) ? camera.centerX : defaultX;
   const centerY = Number.isFinite(camera?.centerY) ? camera.centerY : defaultY;
   const iterations = Math.min(
     2000,
     Math.max(1, Math.round(depth + 230 * Math.log10(zoom))),
   );
-  // ponytail: bound sampling to 2048 pixels per side; use tiled rendering for larger native exports.
+  // ponytail: bound sampling to 4096 pixels per side; use tiled rendering for larger native exports.
   const factor = Math.min(
     1,
-    clamp(quality, 32, 2048) / Math.max(width, height),
+    clamp(quality, 32, 4096) / Math.max(width, height),
   );
   const w = Math.max(1, Math.round(width * factor)),
     h = Math.max(1, Math.round(height * factor));
@@ -647,7 +729,17 @@ function escapeRaster(
   ].join(":");
   if (rasterCache.has(key)) return rasterCache.get(key);
   const image = context.createImageData(w, h),
+    data = image.data,
     [first, second, bg] = [...colors, background].map(rgb);
+  const roots = [
+    first,
+    second,
+    first.map((channel, c) => Math.round((channel + second[c]) / 2)),
+  ];
+  const julia = JULIA[id];
+  const startAtPixel = Boolean(julia) || id === "newton";
+  const flip = id === "burning-ship" ? -1 : 1;
+  const rootY = Math.sqrt(3) / 2;
   const units = span / Math.min(w, h) / zoom;
   const stops = [[8, 17, 34], first, [249, 250, 253], second, [8, 17, 34]];
   const palette = Array.from({ length: 256 }, (_, index) => {
@@ -662,12 +754,11 @@ function escapeRaster(
   for (let py = 0; py < h; py++)
     for (let px = 0; px < w; px++) {
       const real = centerX + (px + 0.5 - w / 2) * units;
-      const imaginary =
-        centerY + (h / 2 - py - 0.5) * units * (id === "burning-ship" ? -1 : 1);
-      let x = JULIA[id] || id === "newton" ? real : 0,
-        y = JULIA[id] || id === "newton" ? imaginary : 0;
-      const cr = JULIA[id]?.[0] ?? real,
-        ci = JULIA[id]?.[1] ?? imaginary;
+      const imaginary = centerY + (h / 2 - py - 0.5) * units * flip;
+      let x = startAtPixel ? real : 0,
+        y = startAtPixel ? imaginary : 0;
+      const cr = julia?.[0] ?? real,
+        ci = julia?.[1] ?? imaginary;
       let count = 0,
         basin = -1;
       if (id === "newton") {
@@ -680,15 +771,17 @@ function escapeRaster(
           x = (2 * x) / 3 + squareReal / denominator;
           y = (2 * y) / 3 - squareImag / denominator;
           count++;
-          if (Math.hypot(x - 1, y) < 1e-5) {
+          // Squared distances below 1e-10 match a root within 1e-5.
+          const left = (x + 0.5) * (x + 0.5);
+          if ((x - 1) * (x - 1) + y * y < 1e-10) {
             basin = 0;
             break;
           }
-          if (Math.hypot(x + 0.5, y - Math.sqrt(3) / 2) < 1e-5) {
+          if (left + (y - rootY) * (y - rootY) < 1e-10) {
             basin = 1;
             break;
           }
-          if (Math.hypot(x + 0.5, y + Math.sqrt(3) / 2) < 1e-5) {
+          if (left + (y + rootY) * (y + rootY) < 1e-10) {
             basin = 2;
             break;
           }
@@ -718,29 +811,21 @@ function escapeRaster(
           count++;
         }
       }
-      let color = bg;
+      let color = bg,
+        mix = 0;
       if (id === "newton" && basin >= 0) {
-        const roots = [
-          first,
-          second,
-          first.map((channel, c) => Math.round((channel + second[c]) / 2)),
-        ];
-        const shade = 0.42 + 0.58 * Math.exp(-count / 18);
-        color = roots[basin].map((channel, c) =>
-          Math.round(channel * shade + bg[c] * (1 - shade)),
-        );
+        color = roots[basin];
+        mix = 0.42 + 0.58 * Math.exp(-count / 18);
       } else if (id !== "newton" && count < iterations) {
         const smooth =
-          count + 1 - Math.log2(Math.max(1, Math.log2(Math.hypot(x, y))));
-        const t = (Math.sin(smooth * 0.11) + 1) / 2;
-        const tint = palette[Math.round(t * 255)];
-        const strength = Math.min(1, 0.06 + count / 14);
-        color = tint.map((channel, c) =>
-          Math.round(bg[c] * (1 - strength) + channel * strength),
-        );
+          count + 1 - Math.log2(Math.max(1, 0.5 * Math.log2(x * x + y * y)));
+        color = palette[Math.round(((Math.sin(smooth * 0.11) + 1) / 2) * 255)];
+        mix = Math.min(1, 0.06 + count / 14);
       }
       const offset = (py * w + px) * 4;
-      image.data.set([...color, 255], offset);
+      for (let c = 0; c < 3; c++)
+        data[offset + c] = Math.round(bg[c] * (1 - mix) + color[c] * mix);
+      data[offset + 3] = 255;
     }
   let canvas;
   if (typeof OffscreenCanvas !== "undefined")
@@ -751,7 +836,13 @@ function escapeRaster(
     canvas.height = h;
   }
   if (canvas) canvas.getContext("2d").putImageData(image, 0, 0);
-  return remember(rasterCache, key, { image, canvas, width: w, height: h }, 4);
+  // Keep only one copy of the pixels: the canvas when there is one.
+  return remember(
+    rasterCache,
+    key,
+    canvas ? { canvas, width: w, height: h } : { image, width: w, height: h },
+    4,
+  );
 }
 
 function drawGeometry(
@@ -767,7 +858,7 @@ function drawGeometry(
   const { minX, minY, maxX, maxY } = referenceBounds;
   const extentX = Math.max(maxX - minX, 1e-9),
     extentY = Math.max(maxY - minY, 1e-9);
-  const zoom = clamp(camera?.zoom ?? 1, 1, 1e8);
+  const zoom = clamp(camera?.zoom ?? 1, 0.25, 1e8);
   const scale =
     Math.min((width * 0.82) / extentX, (height * 0.82) / extentY) * zoom;
   const cx = minX + clamp(camera?.centerX ?? 0.5, 0, 1) * extentX;
@@ -875,7 +966,9 @@ export function drawClassic(
       else context.putImageData(raster.image, 0, 0, 0, 0, raster.width, rows);
     }
   } else {
-    const targetDepth = camera ? item.maxDepth : detail;
+    // Zoom animations (cameras with a center) reveal full detail; a plain zoom keeps the chosen detail.
+    const targetDepth =
+      camera?.centerX !== undefined ? item.maxDepth : detail;
     const target = geometry(id, targetDepth);
     if (item.family === "Geometric" && id !== "h-tree" && !camera) {
       const level = p * targetDepth,

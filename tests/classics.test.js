@@ -2,7 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
-import { CLASSICS, drawClassic, getZoomCamera } from "../src/classics.js";
+import {
+  CLASSICS,
+  drawClassic,
+  getZoomCamera,
+  getZoomPace,
+} from "../src/classics.js";
+import { generateFractal } from "../src/fractal.js";
 
 function canvas() {
   const calls = [],
@@ -74,6 +80,54 @@ test("every named construction renders finite geometry or opaque image data and 
     assert.ok(Object.values(camera).every(Number.isFinite));
     assert.ok(camera.zoom > 1);
     render(item.id, item.defaultDepth, { camera });
+    const { limit } = getZoomPace(item.id);
+    assert.ok(limit >= 16, item.name);
+    const deepest = getZoomCamera(item.id, 3600);
+    assert.equal(deepest.zoom, limit, item.name);
+    assert.ok(Object.values(deepest).every(Number.isFinite));
+  }
+});
+
+test("line-based library fractals open in the studio as the same edge replacement", () => {
+  const turns = (points) =>
+    points.slice(2).map((point, index) => {
+      const [ax, ay] = [
+        points[index + 1][0] - points[index][0],
+        points[index + 1][1] - points[index][1],
+      ];
+      const [bx, by] = [
+        point[0] - points[index + 1][0],
+        point[1] - points[index + 1][1],
+      ];
+      return (
+        Math.round(Math.atan2(ax * by - ay * bx, ax * bx + ay * by) * 1e6) /
+          1e6 +
+        0
+      );
+    });
+  const studio = CLASSICS.filter((item) => item.studio);
+  assert.deepEqual(
+    studio.map((item) => item.id),
+    ["koch-snowflake", "koch-curve", "minkowski", "koch-island", "levy", "terdragon"],
+  );
+  for (const item of studio) {
+    const library = render(item.id, 3)
+      .calls.filter(([name]) => name === "moveTo" || name === "lineTo")
+      .map(([, x, y]) => [x, y]);
+    const line = generateFractal(item.studio.seed, 3, item.studio.sides).points;
+    const expected = JSON.stringify(turns(library));
+    const actual = turns(line.map(({ x, y }) => [x, y]));
+    const flip = (sequence) => sequence.map((turn) => -turn + 0);
+    // Mirror images and reversed paths draw the same fractal; an inward-facing snowflake does not match any of them.
+    assert.ok(
+      [
+        actual,
+        flip(actual),
+        actual.toReversed(),
+        flip(actual.toReversed()),
+      ].some((sequence) => JSON.stringify(sequence) === expected),
+      item.name,
+    );
   }
 });
 
@@ -83,6 +137,13 @@ test("recursive constructions obey their defining counts and growth changes the 
   assert.equal(count("koch-snowflake", 0, "lineTo"), 3);
   assert.equal(count("koch-snowflake", 3, "lineTo"), 3 * 4 ** 3);
   assert.equal(count("sierpinski", 4, "fill"), 3 ** 4);
+  assert.equal(
+    render("sierpinski", 2, { camera: { zoom: 2 } }).calls.filter(
+      ([name]) => name === "fill",
+    ).length,
+    3 ** 2,
+    "a plain zoom keeps the chosen detail",
+  );
   assert.equal(count("carpet", 3, "fillRect") - 1, 8 ** 3);
   assert.equal(count("cantor-dust", 3, "fillRect") - 1, 4 ** 3);
   assert.equal(count("vicsek", 3, "fillRect") - 1, 5 ** 3);
@@ -123,9 +184,9 @@ test("zoom recomputes complex-plane pixels, preserves the initial view, and hand
       ordinary,
     );
   }
-  assert.equal(getZoomCamera("mandelbrot", 1).zoom, 1e8);
+  assert.equal(getZoomCamera("mandelbrot", 6).zoom, 4096);
   const deepest = render("mandelbrot", 160, {
-    camera: getZoomCamera("mandelbrot", 1),
+    camera: getZoomCamera("mandelbrot", Math.log(1e8) / Math.log(4)),
   }).images[0];
   let unresolved = 0;
   for (let i = 0; i < deepest.data.length; i += 4) {

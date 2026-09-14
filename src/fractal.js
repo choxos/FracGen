@@ -1,4 +1,17 @@
 const MAX_SEGMENTS = 100_000;
+export const MAX_ITERATIONS = 16;
+
+/** Complete levels that fit the geometry budget for a seed with `parts` segments. */
+export function levelsWithinBudget(parts, sides) {
+  let levels = 0;
+  let segments = sides;
+  // ponytail: cap complete levels at 100k segments; use a worker for larger drawings.
+  while (levels < MAX_ITERATIONS && segments * parts <= MAX_SEGMENTS) {
+    segments *= parts;
+    levels += 1;
+  }
+  return levels;
+}
 
 export const PRESETS = [
   {
@@ -85,9 +98,11 @@ function buildFractal(seed, requestedIterations, sides, progress) {
   if (
     !Number.isInteger(requestedIterations) ||
     requestedIterations < 0 ||
-    requestedIterations > 6
+    requestedIterations > MAX_ITERATIONS
   ) {
-    throw new RangeError("Iterations must be a whole number from 0 to 6.");
+    throw new RangeError(
+      `Iterations must be a whole number from 0 to ${MAX_ITERATIONS}.`,
+    );
   }
   if (![1, 3, 4, 6].includes(sides)) {
     throw new RangeError("Choose a line or a polygon with 3, 4, or 6 sides.");
@@ -109,17 +124,12 @@ function buildFractal(seed, requestedIterations, sides, progress) {
   if (sides !== 1) points.push({ ...points[0] });
 
   const parts = seed.length - 1;
-  let effectiveIterations = 0;
-  let segments = sides;
-  // ponytail: cap complete levels at 100k segments; use a worker for larger drawings.
-  while (
-    effectiveIterations < requestedIterations &&
-    segments * parts <= MAX_SEGMENTS
-  ) {
-    segments *= parts;
-    effectiveIterations += 1;
-  }
-  const iterations = progress * effectiveIterations;
+  const effectiveIterations = Math.min(
+    requestedIterations,
+    levelsWithinBudget(parts, sides),
+  );
+  // Rounding keeps quantized step progress (k / n) from adding a sliver of the next level.
+  const iterations = Math.round(progress * effectiveIterations * 1e9) / 1e9;
   for (let level = 0; level < Math.ceil(iterations); level += 1) {
     const amount = Math.min(1, iterations - level);
     const next = [];
