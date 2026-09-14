@@ -248,8 +248,10 @@ function renderFractal() {
   );
   $("#segment-count").textContent =
     `${result.segments.toLocaleString()} segments`;
+  // Growth frames sit between levels; one decimal is enough to show progress.
+  const shown = Math.round(result.iterations * 10) / 10;
   $("#iteration-count").textContent =
-    `${result.iterations} repetition${result.iterations === 1 ? "" : "s"}`;
+    `${shown.toLocaleString("en")} repetition${shown === 1 ? "" : "s"}`;
   $("#detail-label").textContent = "Repetitions";
   // The slider stops at the deepest complete level this line can draw.
   setDetailSlider(
@@ -262,8 +264,9 @@ function renderFractal() {
   $("#stage-subtitle").textContent = "One small shape, repeated.";
   $("#fractal-title").textContent = name;
   $("#fractal-description").textContent =
-    `Your shape repeated ${result.iterations} times, creating ${result.segments.toLocaleString()} line segments. ${palettes[state.palette].name} colors.`;
-  $("#limit-message").hidden = !result.limited;
+    `Your shape repeated ${shown} times, creating ${result.segments.toLocaleString()} line segments. ${palettes[state.palette].name} colors.`;
+  // A growth frame is partway through its levels, not limited by the budget.
+  $("#limit-message").hidden = !result.limited || animationLevel !== null;
   $("#limit-message").textContent =
     `Showing ${result.iterations} repetitions to keep your canvas responsive. Remove some points to explore more repetitions.`;
 }

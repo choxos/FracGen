@@ -4,6 +4,12 @@ A free, visual fractal studio at [fracgen.xera.ac](https://fracgen.xera.ac/).
 
 Draw a simple line, move its points, and turn it into a fractal. Explore named mathematical constructions, zoom into their details, and download an image or animation.
 
+![Dragging the points of the snowflake's line while the fractal redraws](documentation/tour.gif)
+
+<sub>The shape editor, from the start of the tour. [Watch the full 120 second tour](documentation/tour.mp4):
+dragging and adding points, repetitions, outlines and colors, a zoom, a drawn line growing, the
+Mandelbrot set opened in the studio, and the Lévy C curve reshaped and zoomed.</sub>
+
 ## Run locally
 
 Requires Node.js 22.12 or newer.
@@ -43,6 +49,21 @@ Zooms move at a fixed speed: 4× per second for lines and escape-time sets, and 
 The entry document contains the page text, canonical URL, social metadata, and structured data. `public/robots.txt` and `public/sitemap.xml` point to the production domain. Fonts and images are hosted locally. Serve unknown paths as real 404 responses, keep the entry document fresh, and cache fingerprinted assets. Allow `blob:` images and media in the site's content security policy so animation previews can play.
 
 Search engines control crawling, indexing, ranking, and the appearance of results. After the domain is live with HTTPS, submit the sitemap through the site's search console.
+
+## The tour
+
+```sh
+npm run build && npx vite preview --port 4173 &
+npm run tour -- http://localhost:4173   # writes documentation/tour.mp4 and tour.gif
+```
+
+Requires ffmpeg on the PATH and a one time `npx playwright install chromium`.
+
+Playwright drives the production build and records it, so every zoom and dialog in the video is the one a visitor gets. It loads the page once and moves by clicking, dragging, typing, and scrolling, since a reload flashes white in the middle of the video. The screencast does not draw the mouse, so the recorder adds a small cursor that follows real input events; nothing is added to the app. Modal dialogs render above every z-index, so the cursor is a popover that is raised again whenever a dialog opens.
+
+Animations play in the expanded preview, which fills the 1280 × 720 frame. The encode keeps the screencast's own 25 fps timing, because resampling duplicates frames unevenly and judders during zooms. The recorder checks key steps, such as the zoom reaching 4,096× and the Lévy C curve opening as three points, and warns when one does not, because a tour that skips a step looks exactly like one that does not. It exits with an error if the page throws.
+
+The mp4 is the full tour and fits the 140 second video limit on X; the gif is the shape editor excerpt.
 
 ## License
 
