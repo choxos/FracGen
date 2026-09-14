@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f8f9fb" />
+    <meta
+      name="description"
+      content="Turn a simple shape into something extraordinary. Draw, explore, and download your own fractals in a free, easy-to-use creative studio."
+    />
+    <title>FracGen | Free Fractal Generator &amp; Animation Maker</title>
+    <link rel="canonical" href="https://fracgen.xera.ac/" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="FracGen" />
+    <meta
+      property="og:title"
+      content="FracGen · Small shape. Infinite possibility."
+    />
+    <meta
+      property="og:description"
+      content="Draw your own fractal, explore classic patterns, and create mesmerizing zoom animations. Free PNG, SVG, GIF, and MP4 exports."
+    />
+    <meta property="og:url" content="https://fracgen.xera.ac/" />
+    <meta
+      property="og:image"
+      content="https://fracgen.xera.ac/social-card.png"
+    />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="A teal Koch snowflake beside the FracGen fractal studio name."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="FracGen · Free Fractal Studio" />
+    <meta
+      name="twitter:description"
+      content="Draw a little shape. Explore a whole new world. Create fractals and zoom animations right in your browser."
+    />
+    <meta
+      name="twitter:image"
+      content="https://fracgen.xera.ac/social-card.png"
+    />
+    <link
+      rel="preload"
+      href="/fonts/dm-sans-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://fracgen.xera.ac/#website",
+            "name": "FracGen",
+            "url": "https://fracgen.xera.ac/",
+            "inLanguage": "en"
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "https://fracgen.xera.ac/#app",
+            "name": "FracGen",
+            "url": "https://fracgen.xera.ac/",
+            "description": "A free browser-based fractal generator. Draw custom shapes, explore classic fractals, and export images or zoom animations.",
+            "applicationCategory": "DesignApplication",
+            "operatingSystem": "Any",
+            "browserRequirements": "Requires JavaScript and a modern browser.",
+            "isAccessibleForFree": true,
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            },
+            "image": "https://fracgen.xera.ac/social-card.png",
+            "featureList": [
+              "Custom fractal shape editor",
+              "Classic fractal library",
+              "Smooth and step-by-step zoom animations",
+              "PNG, SVG, GIF, and MP4 downloads"
+            ]
+          }
+        ]
+      }
+    </script>
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#shape-editor">Skip to the shape editor</a>
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="FracGen home">
+        <img src="/favicon.svg" width="36" height="36" alt="" />
+        fracgen<span class="brand-dot">.</span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a class="nav-active" href="#studio">Studio</a
+        ><a href="#inspiration">Explore shapes</a>
+      </nav>
+      <button class="button button-quiet help-button" id="help-button" aria-label="How it works">
+        <span data-icon="help"></span><span>How it works</span>
+      </button>
+    </header>
+
+    <main id="studio">
+      <section class="intro" aria-labelledby="page-title">
+        <div>
+          <h1 id="page-title">Small shape. Infinite possibility.</h1>
+          <p>
+            Turn a simple line into a fractal. Draw, repeat, and make it yours.
+          </p>
+        </div>
+        <button class="button button-primary" id="download-button" aria-label="Download creation">
+          <span data-icon="download"></span>Download
+          <span class="desktop-label">creation</span>
+        </button>
+      </section>
+
+      <div class="studio-layout">
+        <aside class="control-panel" aria-label="Fractal controls">
+          <section class="shape-section">
+            <div class="section-heading">
+              <h2><span class="step-number">1</span> Make your shape</h2>
+              <button
+                class="icon-button"
+                id="reset-shape"
+                aria-label="Reset shape to the selected starter"
+                title="Reset shape"
+              >
+                <span data-icon="reset"></span>
+              </button>
+            </div>
+            <p class="section-description" id="editor-hint">
+              Drag the dots. See what happens.
+            </p>
+            <div class="segmented editor-tools" aria-label="Shape editing mode">
+              <button class="selected" id="edit-mode" aria-pressed="true">
+                <span data-icon="cursor"></span>Edit points</button
+              ><button id="draw-mode" aria-pressed="false">
+                <span data-icon="pencil"></span>Draw a line
+              </button>
+            </div>
+            <div class="editor-wrap">
+              <svg
+                id="shape-editor"
+                viewBox="0 0 300 210"
+                aria-label="Shape editor"
+                aria-describedby="editor-instructions"
+                tabindex="0"
+              >
+                <defs>
+                  <pattern
+                    id="editor-grid"
+                    width="20"
+                    height="20"
+                    patternUnits="userSpaceOnUse"
+                  >
+                    <circle cx="10" cy="10" r="0.9" fill="#dce1e8" />
+                  </pattern>
+                </defs>
+                <rect width="300" height="210" fill="url(#editor-grid)" />
+                <line x1="30" y1="130" x2="270" y2="130" class="baseline" />
+                <path id="seed-path" />
+                <g id="seed-handles"></g>
+                <text
+                  x="30"
+                  y="158"
+                  class="endpoint-label"
+                  text-anchor="middle"
+                >
+                  start
+                </text>
+                <text
+                  x="270"
+                  y="158"
+                  class="endpoint-label"
+                  text-anchor="middle"
+                >
+                  end
+                </text>
+              </svg>
+              <span class="editor-caption" id="point-count"
+                >5 points. Your starting spark.</span
+              >
+            </div>
+            <div class="editor-actions">
+              <button class="text-button" id="add-point">
+                <span data-icon="plus"></span>Add point</button
+              ><button class="text-button" id="undo" disabled>
+                <span data-icon="undo"></span>Undo
+              </button>
+            </div>
+            <p class="sr-only" id="editor-instructions">
+              Select a point with Tab and use the arrow keys to move it. Hold
+              Shift for larger steps. Delete removes an interior point. The
+              start and end stay fixed. Add point inserts a bend in the longest
+              gap.
+            </p>
+          </section>
+
+          <section class="settings-section">
+            <h2><span class="step-number">2</span> Find your fractal</h2>
+            <div class="control-label">
+              <label for="detail">Repetitions</label
+              ><output id="detail-value" for="detail">5</output>
+            </div>
+            <input
+              id="detail"
+              type="range"
+              min="0"
+              max="6"
+              value="5"
+              aria-describedby="detail-help"
+            />
+            <div class="range-labels" id="detail-help">
+              <span>Simple</span><span>Intricate</span>
+            </div>
+            <div class="control-label base-label">
+              <span id="base-label">Repeat around</span>
+            </div>
+            <div
+              class="segmented base-options"
+              role="group"
+              aria-labelledby="base-label"
+            >
+              <button data-sides="1" aria-pressed="false">
+                <span data-icon="line"></span>Line</button
+              ><button data-sides="3" class="selected" aria-pressed="true">
+                <span data-icon="triangle"></span>Triangle</button
+              ><button data-sides="4" aria-pressed="false">
+                <span data-icon="square"></span>Square</button
+              ><button data-sides="6" aria-pressed="false">
+                <span data-icon="hexagon"></span>Hexagon
+              </button>
+            </div>
+          </section>
+
+          <section class="appearance-section">
+            <div class="section-heading">
+              <h2><span class="step-number">3</span> Add your color</h2>
+              <span id="palette-name">Lagoon</span>
+            </div>
+            <div
+              class="palette-options"
+              role="group"
+              aria-label="Color palette"
+            >
+              <button
+                class="palette selected"
+                data-palette="lagoon"
+                aria-label="Lagoon palette"
+                aria-pressed="true"
+                style="--swatch: linear-gradient(135deg, #1eaca4, #7977d9)"
+              >
+                <span data-icon="check"></span>
+              </button>
+              <button
+                class="palette"
+                data-palette="violet"
+                aria-label="Violet palette"
+                aria-pressed="false"
+                style="--swatch: linear-gradient(135deg, #6d50ca, #c276c2)"
+              >
+                <span data-icon="check"></span>
+              </button>
+              <button
+                class="palette"
+                data-palette="sunset"
+                aria-label="Sunset palette"
+                aria-pressed="false"
+                style="--swatch: linear-gradient(135deg, #dc6745, #b83e88)"
+              >
+                <span data-icon="check"></span>
+              </button>
+              <button
+                class="palette"
+                data-palette="ocean"
+                aria-label="Ocean palette"
+                aria-pressed="false"
+                style="--swatch: linear-gradient(135deg, #2571bd, #38a6b8)"
+              >
+                <span data-icon="check"></span>
+              </button>
+              <button
+                class="palette"
+                data-palette="ink"
+                aria-label="Ink palette"
+                aria-pressed="false"
+                style="--swatch: linear-gradient(135deg, #323c4b, #7d899a)"
+              >
+                <span data-icon="check"></span>
+              </button>
+            </div>
+          </section>
+          <details class="animation-settings">
+            <summary>
+              Animation settings <span id="animation-summary">Smooth zoom</span>
+            </summary>
+            <div class="animation-controls">
+              <label for="animation-type">Animation</label
+              ><select id="animation-type">
+                <option value="zoom">Zoom into the fractal</option>
+                <option value="growth">Grow the pattern</option>
+              </select>
+              <div class="segmented" role="group" aria-label="Playback style">
+                <button
+                  data-motion="smooth"
+                  class="selected"
+                  aria-pressed="true"
+                >
+                  Smooth</button
+                ><button data-motion="steps" aria-pressed="false">
+                  Step by step
+                </button>
+              </div>
+              <div class="control-label">
+                <label for="animation-frames-number">Animation frames</label
+                ><input
+                  type="number"
+                  id="animation-frames-number"
+                  min="1"
+                  max="1000"
+                  step="1"
+                  value="180"
+                  inputmode="numeric"
+                />
+              </div>
+              <input
+                type="range"
+                id="animation-frames"
+                aria-label="Animation frames"
+                min="1"
+                max="1000"
+                step="1"
+                value="180"
+              />
+              <p id="animation-duration">6 seconds at 30 frames per second.</p>
+              <p class="animation-explanation">
+                More frames make a longer journey. Up to 1,000 frames.
+              </p>
+            </div>
+          </details>
+          <div class="control-footer">
+            <span data-icon="sparkle"></span>No right or wrong. Just explore.
+          </div>
+        </aside>
+
+        <section class="preview-panel" aria-labelledby="preview-title">
+          <div class="preview-toolbar">
+            <div class="preview-title">
+              <h2 id="preview-title">Your fractal</h2>
+              <span class="live-label"><i></i>Live</span>
+            </div>
+            <div class="preview-actions">
+              <button class="button button-quiet" id="animate-button">
+                <span data-icon="play"></span
+                ><span id="animate-label">Watch it zoom</span></button
+              ><span class="toolbar-divider"></span
+              ><button
+                class="icon-button"
+                id="background-button"
+                aria-label="Switch to dark canvas"
+                aria-pressed="false"
+                title="Switch canvas background"
+              >
+                <span data-icon="moon"></span></button
+              ><button
+                class="icon-button"
+                id="fullscreen-button"
+                aria-label="Expand preview"
+                aria-pressed="false"
+                title="Expand preview"
+              >
+                <span data-icon="expand"></span>
+              </button>
+            </div>
+          </div>
+          <div class="fractal-stage" id="fractal-stage">
+            <div class="stage-note">
+              <span class="mini-shape" data-icon="sparkle"></span
+              ><span id="design-name">The snowflake</span
+              ><span class="stage-note-divider">/</span
+              ><span id="stage-subtitle">One small shape, repeated.</span>
+            </div>
+            <svg
+              id="fractal-canvas"
+              viewBox="0 0 900 660"
+              role="img"
+              aria-labelledby="fractal-title fractal-description"
+            >
+              <title id="fractal-title">Your snowflake fractal</title>
+              <desc id="fractal-description">
+                A detailed fractal created by replacing each line with your
+                shape, five times.
+              </desc>
+              <defs>
+                <linearGradient
+                  id="fractal-gradient"
+                  x1="10%"
+                  y1="0%"
+                  x2="95%"
+                  y2="100%"
+                >
+                  <stop offset="0%" id="gradient-start" stop-color="#159f9b" />
+                  <stop offset="100%" id="gradient-end" stop-color="#8070cb" />
+                </linearGradient>
+              </defs>
+              <g id="fractal-position">
+                <path
+                  id="fractal-path"
+                  fill="none"
+                  stroke="url(#fractal-gradient)"
+                  stroke-width="1.35"
+                  stroke-linejoin="round"
+                  stroke-linecap="round"
+                  vector-effect="non-scaling-stroke"
+                />
+              </g>
+            </svg>
+            <canvas
+              id="animation-canvas"
+              width="900"
+              height="660"
+              aria-label="Fractal zoom animation"
+              role="img"
+              hidden
+            ></canvas>
+            <div class="animation-timeline" id="animation-timeline" hidden>
+              <input
+                type="range"
+                id="animation-scrub"
+                aria-label="Animation position"
+                min="0"
+                max="179"
+                value="0"
+              /><span id="animation-frame-label">1 / 180 frames</span>
+            </div>
+            <div class="zoom-controls" role="group" aria-label="Preview zoom">
+              <button class="icon-button" id="zoom-out" aria-label="Zoom out">
+                <span data-icon="minus"></span></button
+              ><output id="zoom-value" aria-label="Zoom level">100%</output
+              ><button class="icon-button" id="zoom-in" aria-label="Zoom in">
+                <span data-icon="plus"></span></button
+              ><span></span
+              ><button
+                class="icon-button"
+                id="fit-view"
+                aria-label="Fit fractal to view"
+                title="Fit to view"
+              >
+                <span data-icon="fit"></span>
+              </button>
+            </div>
+          </div>
+          <div class="preview-footer">
+            <span
+              ><i class="status-dot"></i
+              ><span id="segment-count">3,072 segments</span
+              ><span class="footer-divider">·</span
+              ><span id="iteration-count">5 repetitions</span></span
+            ><span class="preview-footer-note"
+              >Made from your imagination.</span
+            >
+          </div>
+          <p class="limit-message" id="limit-message" hidden></p>
+        </section>
+      </div>
+
+      <section
+        class="inspiration"
+        id="inspiration"
+        aria-labelledby="inspiration-title"
+      >
+        <div class="inspiration-heading">
+          <div>
+            <h2 id="inspiration-title">A little inspiration</h2>
+            <p>Start with a shape. Take it somewhere new.</p>
+          </div>
+          <span class="starter-hint"
+            >Pick a starting point <span data-icon="arrow-down"></span
+          ></span>
+        </div>
+        <div class="preset-grid" id="preset-grid"></div>
+      </section>
+      <section
+        class="fractal-library"
+        id="library"
+        aria-labelledby="library-title"
+      >
+        <div class="inspiration-heading">
+          <div>
+            <h2 id="library-title">A world of fractals</h2>
+            <p>Explore familiar classics and find a new favorite.</p>
+          </div>
+          <span id="library-count" class="starter-hint"></span>
+        </div>
+        <div class="library-filters">
+          <label class="search-field"
+            ><span data-icon="search"></span
+            ><input
+              type="search"
+              id="library-search"
+              placeholder="Find a fractal…"
+              aria-label="Search fractal library" /></label
+          ><select id="library-family" aria-label="Filter by fractal family">
+            <option value="all">All families</option>
+            <option>Escape-time</option>
+            <option>Curves</option>
+            <option>Geometric</option>
+            <option>Nature</option>
+          </select>
+        </div>
+        <div class="library-grid" id="library-grid"></div>
+        <p id="library-empty" hidden>
+          No matching fractals. Try another name or choose all families.
+        </p>
+        <button class="button button-outline" id="show-all-classics">
+          Show all fractals
+        </button>
+        <!-- CLASSIC_INDEX -->
+        <p class="library-footnote">
+          A growing collection of named constructions. Fractals have infinitely
+          many variations, so no finite library includes them all.
+        </p>
+      </section>
+      <section class="about-fractals" aria-labelledby="about-title">
+        <div>
+          <h2 id="about-title">Your shape, on repeat.</h2>
+          <p>
+            FracGen is a free fractal generator for curious minds. Start with a
+            line, bend it into a simple pattern, and replace every segment with
+            a smaller copy. A small triangle becomes a Koch snowflake. A few
+            square steps become an intricate crystal.
+          </p>
+          <p>
+            Explore Mandelbrot and Julia sets, Sierpiński patterns,
+            space-filling curves, and branching trees in the library. Zoom into
+            the details or watch a pattern build, then save a still image or an
+            animation.
+          </p>
+        </div>
+        <div class="faq">
+          <details>
+            <summary>Do I need to know any math?</summary>
+            <p>
+              No. Start with a preset or drag the points in the editor. Your
+              fractal updates as you move. Each library example has a short
+              explanation.
+            </p>
+          </details>
+          <details>
+            <summary>Can I save a fractal animation?</summary>
+            <p>
+              Yes. Choose a smooth or step-by-step zoom, set 1 to 1,000
+              animation frames, and export a looping GIF or MP4 video. MP4
+              requires a browser with video encoding support. Custom line
+              drawings also export as SVG, and all designs export as PNG.
+            </p>
+          </details>
+          <details>
+            <summary>Are my drawings uploaded anywhere?</summary>
+            <p>
+              No. Drawing, fractal generation, and exports happen in your
+              browser. No account is needed. Download your design before leaving
+              the page.
+            </p>
+          </details>
+          <details>
+            <summary>How deep can I zoom?</summary>
+            <p>
+              The library redraws mathematical fractals at each zoom level,
+              revealing new detail. Each example has a practical limit based on
+              its construction and numerical precision. Custom line patterns add
+              detail where their repeating geometry allows it.
+            </p>
+          </details>
+        </div>
+      </section>
+      <footer class="site-footer">
+        <span>Simple beginnings. Beautiful complexity.</span
+        ><span>Made for curious minds <span data-icon="sparkle"></span></span>
+      </footer>
+    </main>
+
+    <dialog id="help-dialog" aria-labelledby="help-title">
+      <div class="dialog-heading">
+        <span class="dialog-symbol" data-icon="sparkle"></span
+        ><button class="icon-button close-dialog" aria-label="Close help">
+          <span data-icon="close"></span>
+        </button>
+      </div>
+      <h2 id="help-title">A tiny shape goes a long way.</h2>
+      <p>
+        A fractal repeats a simple pattern at smaller and smaller scales. Here,
+        your line is the pattern.
+      </p>
+      <ol class="help-steps">
+        <li>
+          <strong>Make a little shape.</strong
+          ><span
+            >Drag the dots, add a bend, or draw from start to end. Starter
+            shapes are there if you need a spark.</span
+          >
+        </li>
+        <li>
+          <strong>Repeat. Then repeat again.</strong
+          ><span
+            >Every line becomes a smaller copy of your shape. Move Repetitions
+            to see more detail. Choose “Grow the pattern” in Animation settings
+            to see each step, or explore with a zoom journey.</span
+          >
+        </li>
+        <li>
+          <strong>Make it yours.</strong
+          ><span
+            >Try another color or starting outline. Download an image to keep or
+            a vector to print at any size.</span
+          >
+        </li>
+      </ol>
+      <p class="keyboard-note">
+        <span data-icon="keyboard"></span>Keyboard friendly: Tab to a dot, use
+        arrow keys to move it, and Delete to remove it. On touch screens, drag
+        with one finger.
+      </p>
+      <button class="button button-primary close-dialog full-width">
+        Let's make something
+      </button>
+    </dialog>
+    <dialog id="download-dialog" aria-labelledby="download-title">
+      <div class="dialog-heading">
+        <span class="dialog-symbol" data-icon="download"></span
+        ><button class="icon-button close-dialog" aria-label="Close download">
+          <span data-icon="close"></span>
+        </button>
+      </div>
+      <h2 id="download-title">A little something to keep.</h2>
+      <p>Your creation, ready for a wallpaper, a print, or just because.</p>
+      <fieldset class="export-options">
+        <legend>Choose a format</legend>
+        <label
+          ><input type="radio" name="format" value="png" checked /><span
+            ><strong>Image <span class="format-tag">PNG</span></strong
+            ><small>2400 × 2400 pixels. Ready to share.</small></span
+          ></label
+        >
+        <label
+          ><input type="radio" name="format" value="svg" /><span
+            ><strong>Vector <span class="format-tag">SVG</span></strong
+            ><small>Crisp at any size. Perfect for printing.</small></span
+          ></label
+        >
+        <label
+          ><input type="radio" name="format" value="gif" /><span
+            ><strong
+              >Looping animation <span class="format-tag">GIF</span></strong
+            ><small
+              >800 × 800 pixels. A looping journey into the details.</small
+            ></span
+          ></label
+        >
+        <label
+          ><input type="radio" name="format" value="mp4" /><span
+            ><strong>Video <span class="format-tag">MP4</span></strong
+            ><small
+              >1200 × 1200 pixels. A little movie of your making.</small
+            ></span
+          ></label
+        >
+      </fieldset>
+      <p class="export-note">
+        Your current colors and canvas background are included.
+      </p>
+      <p class="export-note" id="export-animation-note" hidden>
+        Your chosen animation and frame count are included. Preview the finished
+        animation before saving.
+      </p>
+      <p class="export-error" id="mp4-support-note" hidden>
+        This browser cannot encode MP4. Open this studio in a current version of
+        Chrome, Edge, or Safari, or choose GIF here.
+      </p>
+      <div class="export-progress" id="export-progress" hidden>
+        <label
+          for="export-progress-bar"
+          id="export-progress-label"
+          role="status"
+          >Preparing your creation…</label
+        ><progress id="export-progress-bar" max="1" value="0"></progress
+        ><button class="text-button" id="cancel-export">Cancel export</button>
+      </div>
+      <p class="export-error" id="export-error" role="alert" hidden></p>
+      <div id="export-result" hidden></div>
+      <button class="button button-primary full-width" id="save-download">
+        <span data-icon="download"></span>Download creation
+      </button>
+    </dialog>
+    <dialog
+      id="classic-dialog"
+      class="classic-dialog"
+      aria-labelledby="classic-title"
+    >
+      <div class="dialog-heading">
+        <div>
+          <span id="classic-family" class="classic-family"></span>
+          <h2 id="classic-title"></h2>
+        </div>
+        <button
+          class="icon-button close-dialog"
+          aria-label="Close fractal example"
+        >
+          <span data-icon="close"></span>
+        </button>
+      </div>
+      <canvas
+        id="classic-canvas"
+        width="650"
+        height="650"
+        aria-label="Fractal example preview"
+        role="img"
+      ></canvas>
+      <p id="classic-description"></p>
+      <div class="classic-depth">
+        <label for="classic-depth-number">Detail</label
+        ><input
+          type="range"
+          id="classic-depth"
+          aria-label="Example detail"
+        /><input
+          type="number"
+          id="classic-depth-number"
+          aria-label="Example detail number"
+          inputmode="numeric"
+        />
+      </div>
+      <div class="classic-actions">
+        <button class="button button-outline" id="classic-animate">
+          <span data-icon="play"></span><span>Watch it zoom</span></button
+        ><button class="button button-primary" id="classic-download">
+          <span data-icon="download"></span>Export
+        </button>
+      </div>
+      <p class="classic-hint">
+        Uses your studio's animation settings and color palette.
+      </p>
+      <a id="classic-source" target="_blank" rel="noopener noreferrer"
+        >Learn about this fractal <span aria-hidden="true">↗</span></a
+      >
+    </dialog>
+    <div id="toast" role="status" aria-live="polite" class="toast" hidden></div>
+    <noscript
+      ><p class="noscript">
+        Enable JavaScript to draw a shape and generate your fractal.
+      </p></noscript
+    >
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
